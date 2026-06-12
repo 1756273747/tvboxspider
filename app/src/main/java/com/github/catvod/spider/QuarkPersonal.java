@@ -594,7 +594,7 @@ public class QuarkPersonal extends Spider {
                 Notify.show("\u83b7\u53d6\u8f6c\u7801\u94fe\u63a5\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5Cookie\u662f\u5426\u8fc7\u671f");
                 return Result.get().url("").string();
             }
-            return Result.get().url(proxyVideoUrl(transcodingUrl, header)).octet().header(header).string();
+            return Result.get().url(ProxyServer.INSTANCE.buildProxyUrl(transcodingUrl, header)).octet().header(header).string();
         }
     }
 
