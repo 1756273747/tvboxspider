@@ -1083,24 +1083,36 @@ public class QuarkPersonal extends Spider {
         body.put("supports", "fmp4");
 
         OkResult result = OkHttp.post(url, Json.toJson(body), headers);
-        Map<String, Object> json = Json.parseSafe(result.getBody(), Map.class);
+        String respBody = result.getBody();
+        SpiderDebug.log("QuarkPersonal getLiveTranscoding response code=" + result.getCode() + " body=" + (respBody != null ? respBody.substring(0, Math.min(500, respBody.length())) : "null"));
+
+        Map<String, Object> json = Json.parseSafe(respBody, Map.class);
 
         if (json != null && json.get("data") != null) {
             Map<String, Object> data = (Map<String, Object>) json.get("data");
             List<Map<String, Object>> videoList = (List<Map<String, Object>>) data.get("video_list");
+            SpiderDebug.log("QuarkPersonal getLiveTranscoding videoList size=" + (videoList != null ? videoList.size() : 0));
             if (videoList != null) {
                 String flagId = flag.replace("夸克", "");
                 int index = getPlayFormatList().indexOf(flagId);
+                SpiderDebug.log("QuarkPersonal getLiveTranscoding flag=" + flag + " flagId=" + flagId + " index=" + index);
                 if (index >= 0) {
                     String quarkFormat = getPlayFormatQuarkList().get(index);
+                    SpiderDebug.log("QuarkPersonal getLiveTranscoding quarkFormat=" + quarkFormat);
                     for (Map<String, Object> video : videoList) {
-                        if (quarkFormat.equals(video.get("resolution"))) {
+                        Object resolution = video.get("resolution");
+                        SpiderDebug.log("QuarkPersonal getLiveTranscoding video resolution=" + resolution + " quarkFormat=" + quarkFormat + " match=" + quarkFormat.equals(resolution));
+                        if (quarkFormat.equals(resolution)) {
                             Map<String, Object> videoInfo = (Map<String, Object>) video.get("video_info");
-                            return (String) videoInfo.get("url");
+                            String videoUrl = (String) videoInfo.get("url");
+                            SpiderDebug.log("QuarkPersonal getLiveTranscoding found url=" + (videoUrl != null ? videoUrl.substring(0, Math.min(100, videoUrl.length())) : "null"));
+                            return videoUrl;
                         }
                     }
                 }
             }
+        } else {
+            SpiderDebug.log("QuarkPersonal getLiveTranscoding json or data is null");
         }
         return null;
     }
