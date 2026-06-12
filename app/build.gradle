@@ -1,0 +1,242 @@
+plugins {
+    id 'com.android.application'
+    id 'ru.cleverpumpkin.proguard-dictionaries-generator'
+    id 'org.jetbrains.kotlin.android'
+
+}
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+android {
+    namespace 'com.github.catvod'
+
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.github.catvod.demo"
+        minSdk 16
+        targetSdk 34
+        ndk { abiFilters "arm64-v8a" }
+
+
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            proguardFiles 'proguard-rules.pro'
+            proguardDictionaries {
+                dictionaryNames = ["build/class-dictionary", "build/package-dictionary", "build/obfuscation-dictionary"]
+                minLineLength 1
+                maxLineLength 3
+                linesCountInDictionary 100000
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+    testOptions {
+        unitTests.returnDefaultValues = true
+        unitTests.includeAndroidResources = true
+    }
+    kotlinOptions {
+        jvmTarget = "11"
+
+    }
+    packagingOptions {
+
+        exclude 'META-INF/*'
+
+    }
+
+
+    configurations.configureEach {
+        resolutionStrategy {
+            force 'com.squareup.okhttp3:okhttp:3.12.13'
+        }
+    }
+}
+
+dependencies {
+    implementation 'com.github.thegrizzlylabs:sardine-android:0.9'
+    implementation 'wang.harlon.quickjs:wrapper-android:2.0.0'
+    implementation 'com.squareup.okhttp3:okhttp:3.12.13'
+    implementation 'com.google.code.gson:gson:2.11.0'
+    implementation 'cn.wanghaomiao:JsoupXpath:2.5.1'
+    implementation 'com.google.zxing:core:3.3.0'
+    implementation 'com.orhanobut:logger:2.2.0'
+    implementation 'org.jsoup:jsoup:1.15.3'
+    implementation 'androidx.core:core-ktx:1.10.1'
+    testImplementation "io.github.dokar3:quickjs-kt-jvm:1.0.0-alpha13"
+    testImplementation 'org.nanohttpd:nanohttpd:2.3.1'
+    implementation 'commons-codec:commons-codec:1.17.1'
+
+    // Required -- JUnit 4 framework
+    testImplementation 'junit:junit:4.12'
+    // Optional -- Mockito framework（可选，用于模拟一些依赖对象，以达到隔离依赖的效果）
+    testImplementation 'org.mockito:mockito-core:5.12.0'
+    testImplementation "org.robolectric:robolectric:4.13"
+    testImplementation 'cn.hutool:hutool-all:5.8.26'
+
+
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1"
+    // https://mvnrepository.com/artifact/com.sun.net.httpserver/http
+ /*   implementation(files("libs/sun-common-server.jar"))
+    implementation("com.sun.net.httpserver:http:20070405")*/
+    //  implementation("com.hibegin:simplewebserver:0.1.15")
+    //implementation("com.github.codeborne.klite:klite-server:1.7.0")
+
+
+    //implementation 'wang.harlon.quickjs:wrapper-java:1.0.0'
+    // implementation(ext: 'aar', name: 'quickjs', group: 'fongmi', version: 'release')
+    // api 'wang.harlon.quickjs:wrapper-android:2.0.0'
+
+    task buildCustomSpiderJar {
+        doLast {
+            def workDir = file("${projectDir}").parentFile
+            def spiderJarDir = file("$workDir/jar/spider.jar")
+            def smaliOutputDir = file("$workDir/jar/Smali_classes")
+            def customSpiderJar = file("$workDir/jar/custom_spider.jar")
+            def baksmaliJar = file("$workDir/jar/3rd/baksmali-2.5.2.jar")
+            def apktoolJar = file("$workDir/jar/3rd/apktool_2.4.1.jar")
+            def classesDex = file("$workDir/app/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex")
+            def indexJsonFile = file("$workDir/json/index.json")
+
+            // 删除旧文件
+            if (customSpiderJar.exists()) {
+                customSpiderJar.delete()
+            }
+            if (smaliOutputDir.exists()) {
+                delete(smaliOutputDir)
+            }
+
+            // 使用 baksmali 反编译 classes.dex
+            javaexec {
+                main = "-jar"
+                args = [
+                        baksmaliJar.absolutePath,
+                        "d",
+                        classesDex.absolutePath,
+                        "-o",
+                        smaliOutputDir.absolutePath
+                ]
+            }
+
+            // 删除 spider.jar 中的旧目录
+            def targetDirs = [
+                    file("$spiderJarDir/smali/com/github/catvod/spider"),
+                    file("$spiderJarDir/smali/com/github/catvod/parser"),
+                    file("$spiderJarDir/smali/com/github/catvod/js"),
+                    file("$spiderJarDir/smali/com/github/catvod/bean"),
+                    file("$spiderJarDir/smali/com/github/catvod/utils"),
+                    file("$spiderJarDir/smali/com/github/catvod/api"),
+                    file("$spiderJarDir/smali/com/github/catvod/net"),
+                    file("$spiderJarDir/smali/com/google/zxing")
+            ]
+            targetDirs.each { dir ->
+                if (dir.exists()) {
+                    delete(dir)
+                }
+            }
+
+            // 创建目标目录（如果不存在）
+            def targetBaseDir = file("$spiderJarDir/smali/com/github/catvod")
+            if (!targetBaseDir.exists()) {
+                targetBaseDir.mkdirs()
+            }
+            def targetGoogleDir = file("$spiderJarDir/smali/com/google")
+            if (!targetGoogleDir.exists()) {
+                targetGoogleDir.mkdirs()
+            }
+
+            // 移动反编译后的目录
+            def sourceDirs = [
+                    file("$smaliOutputDir/com/github/catvod/spider"),
+                    file("$smaliOutputDir/com/github/catvod/parser"),
+                    file("$smaliOutputDir/com/github/catvod/js"),
+                    file("$smaliOutputDir/com/github/catvod/bean"),
+                    file("$smaliOutputDir/com/github/catvod/utils"),
+                    file("$smaliOutputDir/com/github/catvod/api"),
+                    file("$smaliOutputDir/com/github/catvod/net"),
+                    file("$smaliOutputDir/com/google/zxing")
+            ]
+            def targetPaths = [
+                    file("$targetBaseDir/spider"),
+                    file("$targetBaseDir/parser"),
+                    file("$targetBaseDir/js"),
+                    file("$targetBaseDir/bean"),
+                    file("$targetBaseDir/utils"),
+                    file("$targetBaseDir/api"),
+                    file("$targetBaseDir/net"),
+                    file("$targetGoogleDir/zxing")
+            ]
+
+            sourceDirs.eachWithIndex { src, idx ->
+                if (src.exists()) {
+                    copy {
+                        from src
+                        into targetPaths[idx]
+                    }
+                    delete(src)
+                }
+            }
+
+            // 使用 apktool 打包
+            javaexec {
+                main = "-jar"
+                args = [
+                        apktoolJar.absolutePath,
+                        "b",
+                        spiderJarDir.absolutePath,
+                        "-c"
+                ]
+            }
+
+            // 移动生成的 dex.jar 到 custom_spider.jar
+            def distJar = file("$spiderJarDir/dist/dex.jar")
+            if (distJar.exists()) {
+                copy {
+                    from distJar
+                    into file("$workDir/jar")
+                    rename "dex.jar", "custom_spider.jar"
+                }
+            }
+
+            // 生成 MD5 校验文件
+            def md5File = file("$workDir/jar/custom_spider.jar.md5")
+            def md5 = java.security.MessageDigest.getInstance("MD5").digest(customSpiderJar.bytes).encodeHex().toString()
+            md5File.text = md5
+
+            // 替换index.json  md5 内容
+            def indexJsonContent = indexJsonFile.text
+
+            // 使用正则表达式替换 spider 字段中的 MD5 值
+            def updatedContent = indexJsonContent.replaceAll(
+                    /("spider":\s*"[^;]+;md5;)[^"]+"/,
+                    '$1' + md5 + '"'
+            )
+
+            // 写回文件
+            indexJsonFile.write(updatedContent)
+
+            // 清理临时目录
+            delete(
+                    "$spiderJarDir/build",
+                    "$spiderJarDir/smali",
+                    "$spiderJarDir/dist",
+                    smaliOutputDir
+            )
+        }
+    }
+
+
+
+    tasks.named('buildCustomSpiderJar') {
+        dependsOn 'assembleRelease'
+    }
+}
