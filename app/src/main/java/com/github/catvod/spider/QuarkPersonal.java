@@ -542,9 +542,17 @@ public class QuarkPersonal extends Spider {
         }
         SpiderDebug.log("QuarkPersonal detailContent allUrls=" + allUrls.size());
         if (!allUrls.isEmpty()) {
-            // 为每种清晰度添加一条线路
-            List<String> formats = getPlayFormatList();
-            for (String format : formats) {
+            // 动态获取第一个视频可用的转码清晰度列表
+            List<String> availableFormats = new ArrayList<>();
+            if (!videos.isEmpty()) {
+                availableFormats = getAvailableFormats(videos.get(0).getFid());
+            }
+            // 如果获取失败，使用默认列表
+            if (availableFormats.isEmpty()) {
+                availableFormats = Arrays.asList("\u666e\u753b");
+            }
+            // 为每种实际可用的清晰度添加一条线路
+            for (String format : availableFormats) {
                 builder.append("\u5938\u514b" + format, allUrls);
             }
             // 额外添加原画线路
@@ -1057,20 +1065,51 @@ public class QuarkPersonal extends Spider {
         SpiderDebug.log("QuarkPersonal VIP check result: " + isVip);
     }
 
-    private List<String> getPlayFormatList() {
-        if (isVip) {
-            return Arrays.asList("4K"/*, "超清", "高清", "普画"*/);
-        } else {
-            return Collections.singletonList("普画");
-        }
-    }
+    // 分辨率映射：API返回值 -> 显示名称
+    private static final Map<String, String> RESOLUTION_DISPLAY_MAP = new LinkedHashMap<String, String>() {{
+        put("4k", "4K");
+        put("2k", "2K");
+        put("super", "超清");
+        put("high", "高清");
+        put("normal", "普画");
+        put("low", "普画");
+    }};
 
-    private List<String> getPlayFormatQuarkList() {
-        if (isVip) {
-            return Arrays.asList("4k", "2k", "super", "high", "normal", "low");
-        } else {
-            return Collections.singletonList("low");
+    // 获取该视频实际可用的转码清晰度列表
+    private List<String> getAvailableFormats(String fid) {
+        List<String> formats = new ArrayList<>();
+        try {
+            refreshPus();
+            String url = "https://drive-pc.quark.cn/1/clouddrive/file/v2/play?pr=ucpro&fr=pc";
+            Map<String, String> headers = getApiHeaders();
+            Map<String, Object> body = new HashMap<>();
+            body.put("fid", fid);
+            body.put("resolutions", "normal,low,high,super,2k,4k");
+            body.put("supports", "fmp4");
+
+            OkResult result = OkHttp.post(url, Json.toJson(body), headers);
+            Map<String, Object> json = Json.parseSafe(result.getBody(), Map.class);
+
+            if (json != null && json.get("data") != null) {
+                Map<String, Object> data = (Map<String, Object>) json.get("data");
+                List<Map<String, Object>> videoList = (List<Map<String, Object>>) data.get("video_list");
+                if (videoList != null) {
+                    for (Map<String, Object> video : videoList) {
+                        String resolution = (String) video.get("resolution");
+                        if (resolution != null && RESOLUTION_DISPLAY_MAP.containsKey(resolution)) {
+                            String displayName = RESOLUTION_DISPLAY_MAP.get(resolution);
+                            if (!formats.contains(displayName)) {
+                                formats.add(displayName);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("QuarkPersonal getAvailableFormats error: " + e.getMessage());
         }
+        SpiderDebug.log("QuarkPersonal getAvailableFormats fid=" + fid + " formats=" + formats);
+        return formats;
     }
 
     private String getLiveTranscoding(String fid, String flag) throws Exception {
@@ -1091,21 +1130,43 @@ public class QuarkPersonal extends Spider {
         if (json != null && json.get("data") != null) {
             Map<String, Object> data = (Map<String, Object>) json.get("data");
             List<Map<String, Object>> videoList = (List<Map<String, Object>>) data.get("video_list");
-            SpiderDebug.log("QuarkPersonal getLiveTranscoding videoList size=" + (videoList != null ? videoList.size() : 0));
+            String defaultResolution = (String) data.get("default_resolution");
+            SpiderDebug.log("QuarkPersonal getLiveTranscoding videoList size=" + (videoList != null ? videoList.size() : 0) + " default_resolution=" + defaultResolution);
+
             if (videoList != null) {
+                // 从flag中提取显示名称，再映射回API的resolution
                 String flagId = flag.replace("夸克", "");
-                int index = getPlayFormatList().indexOf(flagId);
-                SpiderDebug.log("QuarkPersonal getLiveTranscoding flag=" + flag + " flagId=" + flagId + " index=" + index);
-                if (index >= 0) {
-                    String quarkFormat = getPlayFormatQuarkList().get(index);
-                    SpiderDebug.log("QuarkPersonal getLiveTranscoding quarkFormat=" + quarkFormat);
+                String targetResolution = null;
+                for (Map.Entry<String, String> entry : RESOLUTION_DISPLAY_MAP.entrySet()) {
+                    if (entry.getValue().equals(flagId)) {
+                        targetResolution = entry.getKey();
+                        break;
+                    }
+                }
+                SpiderDebug.log("QuarkPersonal getLiveTranscoding flag=" + flag + " flagId=" + flagId + " targetResolution=" + targetResolution);
+
+                // 先尝试匹配目标清晰度
+                if (targetResolution != null) {
                     for (Map<String, Object> video : videoList) {
                         Object resolution = video.get("resolution");
-                        SpiderDebug.log("QuarkPersonal getLiveTranscoding video resolution=" + resolution + " quarkFormat=" + quarkFormat + " match=" + quarkFormat.equals(resolution));
-                        if (quarkFormat.equals(resolution)) {
+                        SpiderDebug.log("QuarkPersonal getLiveTranscoding video resolution=" + resolution + " targetResolution=" + targetResolution + " match=" + targetResolution.equals(resolution));
+                        if (targetResolution.equals(resolution)) {
                             Map<String, Object> videoInfo = (Map<String, Object>) video.get("video_info");
                             String videoUrl = (String) videoInfo.get("url");
                             SpiderDebug.log("QuarkPersonal getLiveTranscoding found url=" + (videoUrl != null ? videoUrl.substring(0, Math.min(100, videoUrl.length())) : "null"));
+                            return videoUrl;
+                        }
+                    }
+                }
+
+                // fallback: 使用默认清晰度
+                SpiderDebug.log("QuarkPersonal getLiveTranscoding fallback to default_resolution=" + defaultResolution);
+                if (defaultResolution != null) {
+                    for (Map<String, Object> video : videoList) {
+                        if (defaultResolution.equals(video.get("resolution"))) {
+                            Map<String, Object> videoInfo = (Map<String, Object>) video.get("video_info");
+                            String videoUrl = (String) videoInfo.get("url");
+                            SpiderDebug.log("QuarkPersonal getLiveTranscoding fallback found url=" + (videoUrl != null ? videoUrl.substring(0, Math.min(100, videoUrl.length())) : "null"));
                             return videoUrl;
                         }
                     }
