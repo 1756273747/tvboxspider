@@ -231,7 +231,7 @@ public class QuarkPersonal extends Spider {
                 vod.setVodId(vodId);
                 vod.setVodName(sub.getName());
                 String pic = findPicInFolder(sub.getFid(), sub.getName());
-                vod.setVodPic(pic != null && !pic.isEmpty() ? proxyPicUrl(pic) : defaultPic);
+                vod.setVodPic(pic != null && !pic.isEmpty() ? pic : defaultPic);
                 vod.setVodRemarks("");
                 list.add(vod);
             }
@@ -502,7 +502,7 @@ public class QuarkPersonal extends Spider {
         Vod vod = new Vod();
         vod.setVodId(path);
         vod.setVodName(vodName);
-        vod.setVodPic(!picUrl.isEmpty() ? proxyPicUrl(picUrl) : defaultPic);
+        vod.setVodPic(!picUrl.isEmpty() ? picUrl : defaultPic);
         vod.setVodContent(infoText != null ? infoText : "");
         // 设置NFO解析的额外字段
         if (nfoInfo != null) {
