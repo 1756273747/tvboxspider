@@ -230,7 +230,7 @@ public class QuarkPersonal extends Spider {
                 vod.setVodId(vodId);
                 vod.setVodName(sub.getName());
                 String pic = findPicInFolder(sub.getFid(), sub.getName());
-                vod.setVodPic(pic != null && !pic.isEmpty() ? pic : defaultPic);
+                vod.setVodPic(pic != null && !pic.isEmpty() ? proxyPicUrl(pic) : defaultPic);
                 vod.setVodRemarks("");
                 list.add(vod);
             }
@@ -501,7 +501,7 @@ public class QuarkPersonal extends Spider {
         Vod vod = new Vod();
         vod.setVodId(path);
         vod.setVodName(vodName);
-        vod.setVodPic(!picUrl.isEmpty() ? picUrl : defaultPic);
+        vod.setVodPic(!picUrl.isEmpty() ? proxyPicUrl(picUrl) : defaultPic);
         vod.setVodContent(infoText != null ? infoText : "");
         // 设置NFO解析的额外字段
         if (nfoInfo != null) {
@@ -983,6 +983,23 @@ public class QuarkPersonal extends Spider {
     private boolean isPicFile(String name) {
         String ext = getExtension(name).toLowerCase();
         return picExts.contains(ext);
+    }
+
+    // 将夸克图片URL转换为本地代理URL，解决缓存过期问题
+    private String proxyPicUrl(String picUrl) {
+        if (picUrl == null || picUrl.isEmpty()) return picUrl;
+        try {
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Cookie", cookie);
+            headers.put("Referer", "https://pan.quark.cn/");
+            headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
+            String proxyUrl = ProxyServer.INSTANCE.buildProxyUrl(picUrl, headers);
+            SpiderDebug.log("QuarkPersonal proxyPicUrl original=" + picUrl.substring(0, Math.min(60, picUrl.length())) + " proxy=" + proxyUrl.substring(0, Math.min(80, proxyUrl.length())));
+            return proxyUrl;
+        } catch (Exception e) {
+            SpiderDebug.log("QuarkPersonal proxyPicUrl error: " + e.getMessage());
+            return picUrl;
+        }
     }
 
     private boolean isInfoFile(String name) {
