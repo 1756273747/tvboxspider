@@ -491,6 +491,8 @@ public class QuarkPersonal extends Spider {
         String vodName;
         if (!folderName.isEmpty()) {
             vodName = folderName;
+        } else if (nfoInfo != null && nfoInfo.title != null && !nfoInfo.title.isEmpty()) {
+            vodName = nfoInfo.title;
         } else if (path.length() >= 32) {
             vodName = categoryName;
         } else {
@@ -500,7 +502,7 @@ public class QuarkPersonal extends Spider {
         if (vodName.isEmpty()) vodName = "\u672a\u77e5";
 
         Vod vod = new Vod();
-        vod.setVodId(path);
+        vod.setVodId(rawId);
         vod.setVodName(vodName);
         vod.setVodPic(!picUrl.isEmpty() ? picUrl : defaultPic);
         vod.setVodContent(infoText != null ? infoText : "");
