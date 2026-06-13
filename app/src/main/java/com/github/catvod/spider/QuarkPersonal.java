@@ -20,6 +20,7 @@ import com.github.catvod.net.OkResult;
 import com.github.catvod.utils.Json;
 import com.github.catvod.utils.Notify;
 import com.github.catvod.utils.ProxyServer;
+import com.github.catvod.utils.ProxyVideo;
 import com.github.catvod.utils.ResUtil;
 import com.github.catvod.utils.Util;
 
@@ -985,17 +986,17 @@ public class QuarkPersonal extends Spider {
         return picExts.contains(ext);
     }
 
-    // 将夸克图片URL转换为本地代理URL，解决缓存过期问题
+    // 将夸克图片URL转换为通用代理URL，解决缓存过期问题
     private String proxyPicUrl(String picUrl) {
-        if (picUrl == null || picUrl.isEmpty()) return picUrl;
+        if (picUrl == null || picUrl.isEmpty() || !picUrl.startsWith("http")) {
+            return picUrl;
+        }
         try {
             Map<String, String> headers = new HashMap<>();
             headers.put("Cookie", cookie);
             headers.put("Referer", "https://pan.quark.cn/");
             headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
-            String proxyUrl = ProxyServer.INSTANCE.buildProxyUrl(picUrl, headers);
-            SpiderDebug.log("QuarkPersonal proxyPicUrl original=" + picUrl.substring(0, Math.min(60, picUrl.length())) + " proxy=" + proxyUrl.substring(0, Math.min(80, proxyUrl.length())));
-            return proxyUrl;
+            return ProxyVideo.buildCommonProxyUrl(picUrl, headers);
         } catch (Exception e) {
             SpiderDebug.log("QuarkPersonal proxyPicUrl error: " + e.getMessage());
             return picUrl;
