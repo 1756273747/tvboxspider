@@ -22,8 +22,8 @@ jobs:
       - name: Grant execute permission to gradlew
         run: chmod +x ./gradlew
 
-      - name: Build with Gradle
-        run: ./gradlew app:buildCustomSpiderJar
+      - name: Clean and Build with Gradle
+        run: ./gradlew clean app:buildCustomSpiderJar --rerun-tasks
 
       - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
