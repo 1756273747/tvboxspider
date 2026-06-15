@@ -659,10 +659,10 @@ public class QuarkPersonalConfig extends Spider {
             }
 
             SpiderDebug.log("QuarkPersonalConfig: exchanging code for token...");
-            OkResult result = OkHttp.string(url.toString(), new HashMap<>());
-            Map<String, Object> resp = Json.parseSafe(result.getBody(), Map.class);
+            String body = OkHttp.string(url.toString(), new HashMap<>());
+            Map<String, Object> resp = Json.parseSafe(body, Map.class);
 
-            SpiderDebug.log("QuarkPersonalConfig: token response=" + (result.getBody() != null ? result.getBody().substring(0, Math.min(200, result.getBody().length())) : "null"));
+            SpiderDebug.log("QuarkPersonalConfig: token response=" + (body != null ? body.substring(0, Math.min(200, body.length())) : "null"));
 
             if (resp != null && resp.get("access_token") != null) {
                 String accessToken = String.valueOf(resp.get("access_token"));
