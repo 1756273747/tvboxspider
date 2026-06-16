@@ -127,13 +127,13 @@ public class BaiduPersonal extends Spider {
 
     @Override
     public String homeContent(boolean filter) throws Exception {
-        SpiderDebug.log("BaiduPersonal homeContent...");
+        SpiderDebug.log("BaiduPersonal homeContent cookie=[" + cookie + "] containsBDUSS=" + cookie.contains("BDUSS"));
         List<Class> classes = new ArrayList<>();
 
         // 重新读取 cookie，确保最新
         if (cookie.isEmpty() || !cookie.contains("BDUSS")) {
             cookie = readCookieFromFile();
-            SpiderDebug.log("BaiduPersonal homeContent re-read cookie length=" + cookie.length());
+            SpiderDebug.log("BaiduPersonal homeContent re-read cookie length=" + cookie.length() + " containsBDUSS=" + cookie.contains("BDUSS"));
         }
 
         if (cookie.isEmpty() || !cookie.contains("BDUSS")) {
