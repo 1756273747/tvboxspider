@@ -45,8 +45,10 @@ public class BaiduPersonal extends Spider {
     private Map<String, String> categoryNameMap = new HashMap<>();
 
     private static final String BD_USER_AGENT = "Mozilla/5.0 (Linux; Android 12; SM-X800) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.40 Safari/537.36";
+    private static final String BD_APP_USER_AGENT = "netdisk;P2SP;2.2.91.136;android-android;";
 
     private String cookie = "";
+    private String bdstoken = "";
     private Context savedContext = null;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private int vipType = 0;
@@ -502,8 +504,7 @@ public class BaiduPersonal extends Spider {
         }
 
         Map<String, String> header = new HashMap<>();
-        header.put("User-Agent", BD_USER_AGENT);
-        header.put("Referer", "https://pan.baidu.com/");
+        header.put("User-Agent", BD_APP_USER_AGENT);
         header.put("Cookie", cookie);
 
         return Result.get()
@@ -720,32 +721,39 @@ public class BaiduPersonal extends Spider {
         SpiderDebug.log("BaiduPersonal VIP check result: vipType=" + vipType);
     }
 
+    private void refreshBdstoken() throws Exception {
+        if (!bdstoken.isEmpty()) return;
+        String url = BD_API_HOST + "/api/gettemplatevariable?clienttype=0&app_id=250528&web=1&fields=[\"bdstoken\",\"token\",\"uk\"]";
+        Map<String, String> headers = getApiHeaders();
+        String result = OkHttp.string(url, new HashMap<>(), headers);
+        Map<String, Object> json = Json.parseSafe(result, Map.class);
+        if (json != null && json.get("result") != null) {
+            Map<String, Object> res = (Map<String, Object>) json.get("result");
+            Object token = res.get("bdstoken");
+            if (token != null) {
+                bdstoken = String.valueOf(token);
+                SpiderDebug.log("BaiduPersonal bdstoken refreshed: " + bdstoken);
+            }
+        }
+    }
+
     private String getDownloadUrl(long fsId) throws Exception {
-        String url = BD_API_HOST + "/rest/2.0/xpan/multimedia?method=filemetas&fsids=[" + fsId + "]&dlink=1";
+        refreshBdstoken();
+        String url = BD_API_HOST + "/api/filemetas?target=fsids&fsids=[" + fsId + "]&dlink=1&bdstoken=" + bdstoken;
         Map<String, String> headers = getApiHeaders();
         String result = OkHttp.string(url, new HashMap<>(), headers);
         Map<String, Object> json = Json.parseSafe(result, Map.class);
 
-        if (json != null && json.get("list") != null) {
-            List<Map<String, Object>> list = (List<Map<String, Object>>) json.get("list");
-            if (list != null && !list.isEmpty()) {
-                Object dlink = list.get(0).get("dlink");
+        if (json != null && json.get("info") != null) {
+            List<Map<String, Object>> infoList = (List<Map<String, Object>>) json.get("info");
+            if (infoList != null && !infoList.isEmpty()) {
+                Object dlink = infoList.get(0).get("dlink");
                 if (dlink != null) {
-                    String dlinkUrl = String.valueOf(dlink);
-                    // 通过 HEAD 请求获取 302 重定向后的真实地址
-                    Map<String, String> headHeaders = new HashMap<>();
-                    headHeaders.put("User-Agent", BD_USER_AGENT);
-                    headHeaders.put("Referer", "https://pan.baidu.com/");
-                    headHeaders.put("Cookie", cookie);
-                    OkResult headResult = OkHttp.get(dlinkUrl, new HashMap<>(), headHeaders);
-                    List<String> locations = headResult.getResp().get("Location");
-                    if (locations != null && !locations.isEmpty()) {
-                        return locations.get(0);
-                    }
-                    return dlinkUrl;
+                    return String.valueOf(dlink);
                 }
             }
         }
+        SpiderDebug.log("BaiduPersonal getDownloadUrl failed: " + result);
         return null;
     }
 
