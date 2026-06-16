@@ -32,7 +32,6 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
-// URLEncoder no longer needed for Baidu QR login
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -829,41 +828,7 @@ public class QuarkPersonalConfig extends Spider {
         return jsonp;
     }
 
-    /**
-     * 生成签名（与后端 Arr_sign 函数一致）
-     * 规则：去掉 sign/app/act 字段后，按 key 排序拼接 k=v&...&key，然后 MD5
-     */
-    private String makeSign(Map<String, String> params) {
-        try {
-            // 去掉 sign/app/act
-            Map<String, String> filtered = new HashMap<>();
-            for (Map.Entry<String, String> entry : params.entrySet()) {
-                String k = entry.getKey();
-                if (!k.equals("sign") && !k.equals("app") && !k.equals("act")) {
-                    filtered.put(k, entry.getValue());
-                }
-            }
-            // 按 key 排序拼接
-            List<String> keys = new ArrayList<>(filtered.keySet());
-            java.util.Collections.sort(keys);
-            StringBuilder sb = new StringBuilder();
-            for (String k : keys) {
-                sb.append(k).append("=").append(filtered.get(k)).append("&");
-            }
-            sb.append(QR_SIGN_KEY);
-            // MD5
-            java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
-            byte[] digest = md.digest(sb.toString().getBytes("UTF-8"));
-            StringBuilder hex = new StringBuilder();
-            for (byte b : digest) {
-                hex.append(String.format("%02x", b));
-            }
-            return hex.toString();
-        } catch (Exception e) {
-            SpiderDebug.log("QuarkPersonalConfig makeSign error: " + e.getMessage());
-            return "";
-        }
-    }
+
 
 
 
