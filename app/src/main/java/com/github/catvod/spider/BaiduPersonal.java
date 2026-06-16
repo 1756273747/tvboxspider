@@ -130,6 +130,12 @@ public class BaiduPersonal extends Spider {
         SpiderDebug.log("BaiduPersonal homeContent...");
         List<Class> classes = new ArrayList<>();
 
+        // 重新读取 cookie，确保最新
+        if (cookie.isEmpty() || !cookie.contains("BDUSS")) {
+            cookie = readCookieFromFile();
+            SpiderDebug.log("BaiduPersonal homeContent re-read cookie length=" + cookie.length());
+        }
+
         if (cookie.isEmpty() || !cookie.contains("BDUSS")) {
             SpiderDebug.log("BaiduPersonal: cookie invalid, showing login hint");
             classes.add(new Class("请先登录", "请先登录"));
