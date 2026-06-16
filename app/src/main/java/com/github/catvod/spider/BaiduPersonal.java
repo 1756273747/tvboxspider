@@ -44,6 +44,8 @@ public class BaiduPersonal extends Spider {
     private List<String> seriesCategories = Arrays.asList("电视剧", "综艺", "动漫", "纪录片");
     private Map<String, String> categoryNameMap = new HashMap<>();
 
+    private static final String BD_USER_AGENT = "Mozilla/5.0 (Linux; Android 12; SM-X800) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.40 Safari/537.36";
+
     private String cookie = "";
     private Context savedContext = null;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -242,7 +244,7 @@ public class BaiduPersonal extends Spider {
 
             Map<String, String> headers = new HashMap<>();
             headers.put("Cookie", cookie);
-            headers.put("User-Agent", "pan.baidu.com");
+            headers.put("User-Agent", BD_USER_AGENT);
             headers.put("Referer", "https://pan.baidu.com/");
 
             String proxyUrl = ProxyServer.INSTANCE.buildProxyUrl(downloadUrl, headers);
@@ -500,7 +502,7 @@ public class BaiduPersonal extends Spider {
         }
 
         Map<String, String> header = new HashMap<>();
-        header.put("User-Agent", "pan.baidu.com");
+        header.put("User-Agent", BD_USER_AGENT);
         header.put("Referer", "https://pan.baidu.com/");
         header.put("Cookie", cookie);
 
@@ -562,7 +564,9 @@ public class BaiduPersonal extends Spider {
     // ========== Cookie持久化 ==========
 
     private File getCookieFile() {
-        return new File(savedContext.getFilesDir(), BD_COOKIE_FILE);
+        File file = new File(savedContext.getFilesDir(), BD_COOKIE_FILE);
+        SpiderDebug.log("BaiduPersonal getCookieFile path=" + file.getAbsolutePath() + " exists=" + file.exists());
+        return file;
     }
 
     private String readCookieFromFile() {
@@ -730,7 +734,7 @@ public class BaiduPersonal extends Spider {
                     String dlinkUrl = String.valueOf(dlink);
                     // 通过 HEAD 请求获取 302 重定向后的真实地址
                     Map<String, String> headHeaders = new HashMap<>();
-                    headHeaders.put("User-Agent", "pan.baidu.com");
+                    headHeaders.put("User-Agent", BD_USER_AGENT);
                     headHeaders.put("Referer", "https://pan.baidu.com/");
                     headHeaders.put("Cookie", cookie);
                     OkResult headResult = OkHttp.get(dlinkUrl, new HashMap<>(), headHeaders);
@@ -762,7 +766,7 @@ public class BaiduPersonal extends Spider {
 
     private Map<String, String> getApiHeaders() {
         Map<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
+        headers.put("User-Agent", BD_USER_AGENT);
         headers.put("Referer", "https://pan.baidu.com/");
         headers.put("Cookie", cookie);
         return headers;
