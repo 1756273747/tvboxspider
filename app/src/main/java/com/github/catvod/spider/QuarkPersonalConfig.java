@@ -560,6 +560,7 @@ public class QuarkPersonalConfig extends Spider {
         String imgUrl = String.valueOf(resp.get("imgurl"));
         if (imgUrl.startsWith("//")) imgUrl = "https:" + imgUrl;
         else if (imgUrl.startsWith("/")) imgUrl = BD_PASSPORT_HOST + imgUrl;
+        else if (!imgUrl.startsWith("http")) imgUrl = "https://" + imgUrl;
 
         SpiderDebug.log("QuarkPersonalConfig: baidu sign=" + baiduSign + " imgUrl=" + imgUrl);
 
