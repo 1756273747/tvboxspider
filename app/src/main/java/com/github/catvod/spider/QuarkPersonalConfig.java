@@ -54,12 +54,10 @@ public class QuarkPersonalConfig extends Spider {
     private static final int QR_TIMEOUT_MS = 5 * 60 * 1000;
     private static final int POLL_INTERVAL_MS = 3000;
 
-    // 百度网盘网页扫码登录接口（复用 TVBox 后端二维码系统）
+    // 百度网盘官方扫码登录 API（无需后端）
     private static final String BD_COOKIE_FILE = "baidu_cookie.json";
-    private static final String QR_API_URL = "https://tv.earxo.com/api.php";
-    private static final String QR_APP_ID = "10000";
-    private static final String QR_APP_KEY = "pyScyxidP0IkAW7u9aL9aoZX7Nbr7dRS";
-    private static final String QR_SIGN_KEY = "ckUIQTj^1m4-FrLLcXlngOX5PRyv9+i*";
+    private static final String BD_PASSPORT_HOST = "https://passport.baidu.com";
+    private static final String BD_PAN_HOST = "https://pan.baidu.com";
 
     private Context savedContext;
     private Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -519,18 +517,316 @@ public class QuarkPersonalConfig extends Spider {
     private String buildBaiduTutorialContent() {
         return "【百度网盘使用说明】\n\n"
             + "1. 首次使用需要在本配置线路中扫码登录百度网盘。\n"
-            + "2. 扫码后用手机浏览器打开网页，输入百度网盘 Cookie (BDUSS)。\n"
+            + "2. 请使用百度APP扫码，扫码后在手机上确认登录。\n"
             + "3. 登录成功后，请回到「百度网盘」线路浏览视频。\n"
             + "4. 如需更换账号，先「退出登录」再重新「登录」。\n\n"
-            + "【Cookie 获取方式】\n"
-            + "1. 在电脑浏览器登录 pan.baidu.com\n"
-            + "2. 按 F12 打开开发者工具\n"
-            + "3. 切换到 Application/Storage → Cookies\n"
-            + "4. 复制 BDUSS 的值粘贴到手机网页\n\n"
             + "【注意事项】\n"
             + "- 网盘根目录下需要有视频文件夹，子文件夹会自动作为分类显示。\n"
             + "- 支持自动识别封面图片和简介文件。\n"
             + "- 支持搜索网盘内的文件夹。";
+    }
+
+    // ========== 百度网盘官方扫码登录系统（无需后端） ==========
+
+    private String baiduGid = "";
+    private String baiduSign = "";
+
+    private void doBaiduQRLogin() throws Exception {
+        loginSuccess = false;
+        loginCancelled = false;
+        baiduGid = generateBaiduGid();
+
+        // 1. 获取二维码 sign 和图片 URL
+        SpiderDebug.log("QuarkPersonalConfig: fetching baidu qrcode...");
+        String qrcodeUrl = BD_PASSPORT_HOST + "/v2/api/getqrcode?lp=pc&qrloginfrom=pc&gid=" + baiduGid
+            + "&callback=tangram_guid_" + System.currentTimeMillis()
+            + "&apiver=v3&tt=" + System.currentTimeMillis()
+            + "&tpl=mn&_=" + System.currentTimeMillis();
+
+        Map<String, String> headers = new HashMap<>();
+        headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+        headers.put("Referer", "https://pan.baidu.com/");
+
+        String result = OkHttp.string(qrcodeUrl, new HashMap<>(), headers);
+        SpiderDebug.log("QuarkPersonalConfig: getqrcode response=" + (result != null ? result.substring(0, Math.min(200, result.length())) : "null"));
+
+        // 解析 JSONP: tangram_guid_xxx({"errno":0,"imgurl":"...","sign":"..."})
+        String jsonStr = extractJsonFromJsonp(result);
+        Map<String, Object> resp = Json.parseSafe(jsonStr, Map.class);
+        if (resp == null || !resp.containsKey("sign") || !resp.containsKey("imgurl")) {
+            throw new Exception("获取二维码失败");
+        }
+
+        baiduSign = String.valueOf(resp.get("sign"));
+        String imgUrl = String.valueOf(resp.get("imgurl"));
+        if (imgUrl.startsWith("//")) imgUrl = "https:" + imgUrl;
+        else if (imgUrl.startsWith("/")) imgUrl = BD_PASSPORT_HOST + imgUrl;
+
+        SpiderDebug.log("QuarkPersonalConfig: baidu sign=" + baiduSign + " imgUrl=" + imgUrl);
+
+        // 2. 在主线程显示二维码图片
+        final String finalImgUrl = imgUrl;
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                showBaiduQRImageDialog(finalImgUrl);
+            }
+        });
+
+        // 3. 轮询扫码状态
+        pollBaiduLoginStatus();
+    }
+
+    private void showBaiduQRImageDialog(String imgUrl) {
+        try {
+            dismissLoadingDialog();
+            Activity activity = Init.getActivity();
+            if (activity == null || activity.isFinishing()) {
+                Notify.show("无法显示二维码，请重试");
+                return;
+            }
+
+            LinearLayout layout = new LinearLayout(activity);
+            layout.setOrientation(LinearLayout.VERTICAL);
+            layout.setGravity(Gravity.CENTER_HORIZONTAL);
+            layout.setPadding(ResUtil.dp2px(24), ResUtil.dp2px(16), ResUtil.dp2px(24), ResUtil.dp2px(16));
+
+            ImageView imageView = new ImageView(activity);
+            try {
+                // 下载二维码图片
+                OkResult imgResult = OkHttp.get(imgUrl, new HashMap<>(), new HashMap<>());
+                byte[] imgBytes = imgResult.getBody() != null ? imgResult.getBody().getBytes() : null;
+                if (imgBytes != null && imgBytes.length > 0) {
+                    Bitmap bitmap = android.graphics.BitmapFactory.decodeByteArray(imgBytes, 0, imgBytes.length);
+                    if (bitmap != null) {
+                        int size = ResUtil.dp2px(200);
+                        imageView.setImageBitmap(Bitmap.createScaledBitmap(bitmap, size, size, true));
+                    } else {
+                        imageView.setImageResource(android.R.drawable.ic_menu_gallery);
+                    }
+                } else {
+                    imageView.setImageResource(android.R.drawable.ic_menu_gallery);
+                }
+            } catch (Exception e) {
+                SpiderDebug.log("BaiduQR: load image failed: " + e.getMessage());
+                imageView.setImageResource(android.R.drawable.ic_menu_gallery);
+            }
+            layout.addView(imageView);
+
+            TextView hintView = new TextView(activity);
+            hintView.setText("请使用百度APP扫码登录\n扫码后在手机上确认登录");
+            hintView.setTextSize(14);
+            hintView.setTextColor(Color.WHITE);
+            hintView.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            hintParams.topMargin = ResUtil.dp2px(12);
+            hintView.setLayoutParams(hintParams);
+            layout.addView(hintView);
+
+            qrDialog = new AlertDialog.Builder(activity)
+                .setTitle("百度网盘登录")
+                .setView(layout)
+                .setNegativeButton("取消", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        loginCancelled = true;
+                    }
+                })
+                .setCancelable(false)
+                .show();
+            qrDialog.setCanceledOnTouchOutside(false);
+
+        } catch (Exception e) {
+            SpiderDebug.log("BaiduQRLogin showQRDialog error: " + e.getMessage());
+        }
+    }
+
+    private void pollBaiduLoginStatus() {
+        SpiderDebug.log("QuarkPersonalConfig: start polling baidu login status, sign=" + baiduSign);
+
+        long startTime = System.currentTimeMillis();
+        boolean gotScan = false;
+
+        while (!loginCancelled && !loginSuccess) {
+            if (System.currentTimeMillis() - startTime > QR_TIMEOUT_MS) {
+                SpiderDebug.log("QuarkPersonalConfig: baidu login timeout");
+                mainHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        dismissDialog();
+                        Notify.show("二维码已过期，请重新扫码");
+                    }
+                });
+                break;
+            }
+
+            try {
+                Thread.sleep(POLL_INTERVAL_MS);
+            } catch (InterruptedException e) {
+                break;
+            }
+
+            if (loginCancelled) break;
+
+            try {
+                // 轮询扫码状态（长轮询，超时35秒）
+                String pollUrl = BD_PASSPORT_HOST + "/channel/unicast?channel_id=" + baiduSign
+                    + "&gid=" + baiduGid + "&tpl=mn&_sdkFrom=1"
+                    + "&callback=tangram_guid_" + System.currentTimeMillis()
+                    + "&apiver=v3&tt=" + System.currentTimeMillis()
+                    + "&_=" + (System.currentTimeMillis() + 2);
+
+                Map<String, String> headers = new HashMap<>();
+                headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+
+                String result = OkHttp.string(pollUrl, new HashMap<>(), headers);
+                SpiderDebug.log("QuarkPersonalConfig: poll result=" + (result != null ? result.substring(0, Math.min(200, result.length())) : "null"));
+
+                String jsonStr = extractJsonFromJsonp(result);
+                Map<String, Object> resp = Json.parseSafe(jsonStr, Map.class);
+                if (resp == null) continue;
+
+                Object errnoObj = resp.get("errno");
+                int errno = errnoObj instanceof Number ? ((Number) errnoObj).intValue() : Integer.parseInt(String.valueOf(errnoObj));
+
+                if (errno == 1) {
+                    // 未扫码，继续轮询
+                    continue;
+                }
+
+                if (errno != 0) {
+                    SpiderDebug.log("QuarkPersonalConfig: poll errno=" + errno);
+                    continue;
+                }
+
+                // 解析 channel_v
+                String channelV = resp.containsKey("channel_v") ? String.valueOf(resp.get("channel_v")) : "";
+                if (channelV.isEmpty()) continue;
+
+                Map<String, Object> channelData = Json.parseSafe(channelV, Map.class);
+                if (channelData == null) continue;
+
+                int status = channelData.containsKey("status") ? Integer.parseInt(String.valueOf(channelData.get("status"))) : -1;
+
+                if (status == 1) {
+                    // 已扫码，等待确认
+                    if (!gotScan) {
+                        gotScan = true;
+                        mainHandler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                updateQrHint("已扫码，请在手机上确认登录");
+                            }
+                        });
+                    }
+                    continue;
+                }
+
+                if (status == 0) {
+                    // 已确认登录，获取 v 值（bduss）
+                    String bduss = channelData.containsKey("v") ? String.valueOf(channelData.get("v")) : "";
+                    if (!bduss.isEmpty()) {
+                        SpiderDebug.log("QuarkPersonalConfig: got bduss, exchanging for cookie...");
+                        exchangeBdussForCookie(bduss);
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                SpiderDebug.log("QuarkPersonalConfig: poll baidu status error: " + e.getMessage());
+            }
+        }
+    }
+
+    private void exchangeBdussForCookie(String bduss) {
+        try {
+            String loginUrl = BD_PASSPORT_HOST + "/v3/login/main/qrbdusslogin"
+                + "?v=" + System.currentTimeMillis()
+                + "&bduss=" + bduss
+                + "&u=https%3A%2F%2Fpan.baidu.com%2F"
+                + "&loginVersion=v4&qrcode=1&tpl=mn&apiver=v3"
+                + "&tt=" + System.currentTimeMillis()
+                + "&time=" + (System.currentTimeMillis() / 1000)
+                + "&alg=v3&sig=&elapsed=13"
+                + "&callback=bd__cbs__" + System.currentTimeMillis();
+
+            Map<String, String> headers = new HashMap<>();
+            headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+            headers.put("Referer", "https://pan.baidu.com/");
+
+            OkResult result = OkHttp.get(loginUrl, new HashMap<>(), headers);
+            SpiderDebug.log("QuarkPersonalConfig: qrbdusslogin response=" + (result.getBody() != null ? result.getBody().substring(0, Math.min(200, result.getBody().length())) : "null"));
+
+            // 从响应头中提取 Cookie
+            List<String> setCookies = result.getResp().get("set-Cookie");
+            if (setCookies != null && !setCookies.isEmpty()) {
+                List<String> cookieParts = new ArrayList<>();
+                for (String c : setCookies) {
+                    String part = c.split(";")[0].trim();
+                    if (!part.isEmpty()) cookieParts.add(part);
+                }
+                if (!cookieParts.isEmpty()) {
+                    baiduCookie = TextUtils.join("; ", cookieParts);
+                    writeBaiduCookieToFile(baiduCookie);
+                    loginSuccess = true;
+
+                    SpiderDebug.log("QuarkPersonalConfig: baidu login success! cookie length=" + baiduCookie.length());
+
+                    mainHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            dismissDialog();
+                            Notify.show("百度网盘登录成功！");
+                        }
+                    });
+                    return;
+                }
+            }
+
+            SpiderDebug.log("QuarkPersonalConfig: login response has no set-Cookie");
+            mainHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    dismissDialog();
+                    Notify.show("登录失败：未获取到Cookie");
+                }
+            });
+        } catch (Exception e) {
+            SpiderDebug.log("QuarkPersonalConfig: exchangeBduss error: " + e.getMessage());
+            mainHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    dismissDialog();
+                    Notify.show("登录失败: " + e.getMessage());
+                }
+            });
+        }
+    }
+
+    private String generateBaiduGid() {
+        String chars = "xxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx";
+        StringBuilder gid = new StringBuilder();
+        for (int i = 0; i < chars.length(); i++) {
+            char c = chars.charAt(i);
+            if (c == 'x') {
+                gid.append(Integer.toHexString((int) (Math.random() * 16)));
+            } else if (c == 'y') {
+                gid.append(Integer.toHexString((int) ((Math.random() * 4) + 8)));
+            } else {
+                gid.append(c);
+            }
+        }
+        return gid.toString().toUpperCase();
+    }
+
+    private String extractJsonFromJsonp(String jsonp) {
+        if (jsonp == null) return "";
+        int start = jsonp.indexOf('(');
+        int end = jsonp.lastIndexOf(')');
+        if (start > 0 && end > start) {
+            return jsonp.substring(start + 1, end);
+        }
+        return jsonp;
     }
 
     /**
@@ -569,201 +865,7 @@ public class QuarkPersonalConfig extends Spider {
         }
     }
 
-    // ========== 百度网盘网页扫码登录系统 ==========
 
-    private String currentQrToken = "";
-
-    private void doBaiduQRLogin() throws Exception {
-        loginSuccess = false;
-        loginCancelled = false;
-        currentQrToken = "";
-
-        // 1. 调用后端创建二维码会话
-        SpiderDebug.log("QuarkPersonalConfig: calling qrcode_create...");
-        String createUrl = QR_API_URL + "?act=qrcode_create&app=" + QR_APP_ID;
-
-        Map<String, String> params = new HashMap<>();
-        params.put("device_id", getDeviceId());
-        params.put("type", "baidu_login");
-        params.put("t", String.valueOf(System.currentTimeMillis()));
-        params.put("sign", makeSign(params));
-
-        String body = OkHttp.string(createUrl, params);
-        SpiderDebug.log("QuarkPersonalConfig: qrcode_create response=" + (body != null ? body.substring(0, Math.min(300, body.length())) : "null"));
-
-        Map<String, Object> resp = Json.parseSafe(body, Map.class);
-        if (resp == null || resp.get("code") == null || !String.valueOf(resp.get("code")).equals("200")) {
-            throw new Exception("创建二维码会话失败");
-        }
-
-        Map<String, Object> data = (Map<String, Object>) resp.get("msg");
-        if (data == null) {
-            throw new Exception("二维码数据为空");
-        }
-
-        String qrToken = String.valueOf(data.get("qr_token"));
-        String qrUrl = String.valueOf(data.get("qr_url"));
-        currentQrToken = qrToken;
-
-        SpiderDebug.log("QuarkPersonalConfig: qrUrl=" + qrUrl + " token=" + qrToken);
-
-        // 2. 在主线程显示 QR 码
-        final String finalQrUrl = qrUrl;
-        mainHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                showBaiduQRDialog(finalQrUrl);
-            }
-        });
-
-        // 3. 轮询后端获取扫码结果
-        pollBaiduQRStatus(qrToken);
-    }
-
-    private void showBaiduQRDialog(String qrUrl) {
-        try {
-            dismissLoadingDialog();
-            Activity activity = Init.getActivity();
-            if (activity == null || activity.isFinishing()) {
-                Notify.show("无法显示二维码，请重试");
-                return;
-            }
-
-            LinearLayout layout = new LinearLayout(activity);
-            layout.setOrientation(LinearLayout.VERTICAL);
-            layout.setGravity(Gravity.CENTER_HORIZONTAL);
-            layout.setPadding(ResUtil.dp2px(24), ResUtil.dp2px(16), ResUtil.dp2px(24), ResUtil.dp2px(16));
-
-            ImageView imageView = new ImageView(activity);
-            try {
-                int size = ResUtil.dp2px(200);
-                Bitmap qrBitmap = QRCode.getBitmap(qrUrl, size, 2);
-                imageView.setImageBitmap(qrBitmap);
-            } catch (Exception e) {
-                SpiderDebug.log("BaiduQR: generate QR failed: " + e.getMessage());
-                imageView.setImageResource(android.R.drawable.ic_menu_gallery);
-            }
-            layout.addView(imageView);
-
-            TextView hintView = new TextView(activity);
-            hintView.setText("请使用手机浏览器扫码\n在网页上输入百度网盘 Cookie");
-            hintView.setTextSize(14);
-            hintView.setTextColor(Color.WHITE);
-            hintView.setGravity(Gravity.CENTER);
-            LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            hintParams.topMargin = ResUtil.dp2px(12);
-            hintView.setLayoutParams(hintParams);
-            layout.addView(hintView);
-
-            qrDialog = new AlertDialog.Builder(activity)
-                .setTitle("百度网盘登录")
-                .setView(layout)
-                .setNegativeButton("取消", new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        loginCancelled = true;
-                    }
-                })
-                .setCancelable(false)
-                .show();
-            qrDialog.setCanceledOnTouchOutside(false);
-
-        } catch (Exception e) {
-            SpiderDebug.log("BaiduQRLogin showQRDialog error: " + e.getMessage());
-        }
-    }
-
-    private void pollBaiduQRStatus(String qrToken) {
-        SpiderDebug.log("QuarkPersonalConfig: start polling qrcode status, token=" + qrToken);
-
-        String statusUrl = QR_API_URL + "?act=qrcode_status&app=" + QR_APP_ID;
-        long startTime = System.currentTimeMillis();
-
-        while (!loginCancelled && !loginSuccess) {
-            // 超时检查（5分钟）
-            if (System.currentTimeMillis() - startTime > QR_TIMEOUT_MS) {
-                SpiderDebug.log("QuarkPersonalConfig: baidu QR timeout");
-                mainHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        dismissDialog();
-                        Notify.show("二维码已过期，请重新扫码");
-                    }
-                });
-                break;
-            }
-
-            try {
-                Thread.sleep(POLL_INTERVAL_MS);
-            } catch (InterruptedException e) {
-                break;
-            }
-
-            if (loginCancelled) break;
-
-            try {
-                Map<String, String> params = new HashMap<>();
-                params.put("qr_token", qrToken);
-                params.put("t", String.valueOf(System.currentTimeMillis()));
-                params.put("sign", makeSign(params));
-
-                String body = OkHttp.string(statusUrl, params);
-                Map<String, Object> resp = Json.parseSafe(body, Map.class);
-
-                if (resp == null || resp.get("code") == null) continue;
-
-                if (!String.valueOf(resp.get("code")).equals("200")) continue;
-
-                Map<String, Object> data = (Map<String, Object>) resp.get("msg");
-                if (data == null) continue;
-
-                int status = Integer.parseInt(String.valueOf(data.get("status")));
-
-                if (status == 2) {
-                    // 已确认，获取 Cookie
-                    String cookieStr = data.get("user_token") != null ? String.valueOf(data.get("user_token")) : "";
-                    if (!cookieStr.isEmpty()) {
-                        baiduCookie = cookieStr;
-                        writeBaiduCookieToFile(cookieStr);
-                        loginSuccess = true;
-
-                        SpiderDebug.log("QuarkPersonalConfig: baidu login success!");
-
-                        mainHandler.post(new Runnable() {
-                            @Override
-                            public void run() {
-                                dismissDialog();
-                                Notify.show("百度网盘登录成功！");
-                            }
-                        });
-                        break;
-                    }
-                } else if (status == 3) {
-                    SpiderDebug.log("QuarkPersonalConfig: baidu QR expired");
-                    mainHandler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            dismissDialog();
-                            Notify.show("二维码已过期，请重新扫码");
-                        }
-                    });
-                    break;
-                }
-                // status=0/1: 继续轮询
-            } catch (Exception e) {
-                SpiderDebug.log("QuarkPersonalConfig: poll baidu QR status error: " + e.getMessage());
-            }
-        }
-    }
-
-    private String getDeviceId() {
-        try {
-            return android.provider.Settings.Secure.getString(savedContext.getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
-        } catch (Exception e) {
-            return UUID.randomUUID().toString();
-        }
-    }
 
     // ========== QR 登录系统 ==========
 
