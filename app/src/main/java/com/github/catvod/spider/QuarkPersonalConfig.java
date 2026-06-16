@@ -661,20 +661,21 @@ public class QuarkPersonalConfig extends Spider {
             if (loginCancelled) break;
 
             try {
-                // 轮询扫码状态（长轮询，超时35秒）
+                // 轮询扫码状态 - 参照 BaiDuYunHandler.kt 实现
                 String pollUrl = BD_PASSPORT_HOST + "/channel/unicast?channel_id=" + baiduSign
-                    + "&gid=" + baiduGid + "&tpl=mn&_sdkFrom=1"
-                    + "&callback=tangram_guid_" + System.currentTimeMillis()
-                    + "&apiver=v3&tt=" + System.currentTimeMillis()
-                    + "&_=" + (System.currentTimeMillis() + 2);
+                    + "&tpl=netdisk&callback=&apiver=v3&tt=" + System.currentTimeMillis()
+                    + "&_=" + System.currentTimeMillis();
 
                 Map<String, String> headers = new HashMap<>();
-                headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+                headers.put("User-Agent", "Mozilla/5.0 (Linux; Android 12; SM-X800) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.40 Safari/537.36");
+                headers.put("Accept", "application/json, text/plain, */*");
+                headers.put("Referer", "https://pan.baidu.com/");
 
                 String result = OkHttp.string(pollUrl, new HashMap<>(), headers);
                 SpiderDebug.log("QuarkPersonalConfig: poll result=" + (result != null ? result.substring(0, Math.min(200, result.length())) : "null"));
 
-                String jsonStr = extractJsonFromJsonp(result);
+                // 参照 BaiDuYunHandler.kt 处理 JSONP：trim 掉括号
+                String jsonStr = result != null ? result.trim().replaceAll("^[^(]*\\(", "").replaceAll("\\)[^)]*$", "") : "";
                 Map<String, Object> resp = Json.parseSafe(jsonStr, Map.class);
                 if (resp == null) continue;
 
@@ -698,7 +699,8 @@ public class QuarkPersonalConfig extends Spider {
                 Map<String, Object> channelData = Json.parseSafe(channelV, Map.class);
                 if (channelData == null) continue;
 
-                int status = channelData.containsKey("status") ? Integer.parseInt(String.valueOf(channelData.get("status"))) : -1;
+                Object statusObj = channelData.get("status");
+                int status = statusObj instanceof Number ? ((Number) statusObj).intValue() : Integer.parseInt(String.valueOf(statusObj));
 
                 if (status == 1) {
                     // 已扫码，等待确认
@@ -731,50 +733,66 @@ public class QuarkPersonalConfig extends Spider {
 
     private void exchangeBdussForCookie(String bduss) {
         try {
+            // 参照 BaiDuYunHandler.kt 实现
             String loginUrl = BD_PASSPORT_HOST + "/v3/login/main/qrbdusslogin"
                 + "?v=" + System.currentTimeMillis()
                 + "&bduss=" + bduss
-                + "&u=https%3A%2F%2Fpan.baidu.com%2F"
-                + "&loginVersion=v4&qrcode=1&tpl=mn&apiver=v3"
+                + "&u=&loginVersion=v4&qrcode=1&tpl=netdisk&apiver=v3"
                 + "&tt=" + System.currentTimeMillis()
-                + "&time=" + (System.currentTimeMillis() / 1000)
-                + "&alg=v3&sig=&elapsed=13"
-                + "&callback=bd__cbs__" + System.currentTimeMillis();
+                + "&traceid=&callback=bd__cbs__cupstt";
 
             Map<String, String> headers = new HashMap<>();
-            headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+            headers.put("User-Agent", "Mozilla/5.0 (Linux; Android 12; SM-X800) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.40 Safari/537.36");
+            headers.put("Accept", "application/json, text/plain, */*");
             headers.put("Referer", "https://pan.baidu.com/");
 
             OkResult result = OkHttp.get(loginUrl, new HashMap<>(), headers);
-            SpiderDebug.log("QuarkPersonalConfig: qrbdusslogin response=" + (result.getBody() != null ? result.getBody().substring(0, Math.min(200, result.getBody().length())) : "null"));
+            String body = result.getBody();
+            SpiderDebug.log("QuarkPersonalConfig: qrbdusslogin response=" + (body != null ? body.substring(0, Math.min(200, body.length())) : "null"));
 
-            // 从响应头中提取 Cookie
-            List<String> setCookies = result.getResp().get("set-Cookie");
-            if (setCookies != null && !setCookies.isEmpty()) {
-                List<String> cookieParts = new ArrayList<>();
-                for (String c : setCookies) {
-                    String part = c.split(";")[0].trim();
-                    if (!part.isEmpty()) cookieParts.add(part);
-                }
-                if (!cookieParts.isEmpty()) {
-                    baiduCookie = TextUtils.join("; ", cookieParts);
-                    writeBaiduCookieToFile(baiduCookie);
-                    loginSuccess = true;
+            // 参照 BaiDuYunHandler.kt 解析 JSONP 响应
+            String cleanBody = body != null ? body.substring(body.indexOf("(") + 1, body.lastIndexOf(")")) : "";
+            // 处理 HTML 转义
+            cleanBody = cleanBody.replace("&quot;", "\"").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">");
+            Map<String, Object> loginJson = Json.parseSafe(cleanBody, Map.class);
 
-                    SpiderDebug.log("QuarkPersonalConfig: baidu login success! cookie length=" + baiduCookie.length());
-
-                    mainHandler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            dismissDialog();
-                            Notify.show("百度网盘登录成功！");
-                        }
-                    });
-                    return;
+            boolean loginOk = false;
+            if (loginJson != null && loginJson.containsKey("errInfo")) {
+                Map<String, Object> errInfo = (Map<String, Object>) loginJson.get("errInfo");
+                if (errInfo != null && "0".equals(String.valueOf(errInfo.get("no")))) {
+                    loginOk = true;
                 }
             }
 
-            SpiderDebug.log("QuarkPersonalConfig: login response has no set-Cookie");
+            if (loginOk) {
+                // 从响应头中提取 Cookie
+                List<String> setCookies = result.getResp().get("set-cookie");
+                if (setCookies != null && !setCookies.isEmpty()) {
+                    List<String> cookieParts = new ArrayList<>();
+                    for (String c : setCookies) {
+                        String part = c.split(";")[0].trim();
+                        if (!part.isEmpty()) cookieParts.add(part);
+                    }
+                    if (!cookieParts.isEmpty()) {
+                        baiduCookie = TextUtils.join(";", cookieParts);
+                        writeBaiduCookieToFile(baiduCookie);
+                        loginSuccess = true;
+
+                        SpiderDebug.log("QuarkPersonalConfig: baidu login success! cookie length=" + baiduCookie.length());
+
+                        mainHandler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                dismissDialog();
+                                Notify.show("百度网盘登录成功！");
+                            }
+                        });
+                        return;
+                    }
+                }
+            }
+
+            SpiderDebug.log("QuarkPersonalConfig: login failed or no cookie, response=" + cleanBody);
             mainHandler.post(new Runnable() {
                 @Override
                 public void run() {
