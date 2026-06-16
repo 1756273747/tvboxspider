@@ -11,7 +11,6 @@ import android.os.Looper;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
-import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -55,12 +54,11 @@ public class QuarkPersonalConfig extends Spider {
     private static final int QR_TIMEOUT_MS = 5 * 60 * 1000;
     private static final int POLL_INTERVAL_MS = 3000;
 
-    // 百度网盘 OAuth2 常量
+    // 百度网盘 OAuth2 后端接口
     private static final String BD_TOKEN_FILE = "baidu_token.json";
-    private static final String BD_OAUTH_AUTHORIZE = "https://openapi.baidu.com/oauth/2.0/authorize";
-    private static final String BD_OAUTH_TOKEN = "https://openapi.baidu.com/oauth/2.0/token";
-    private static final String BD_CLIENT_ID = "iYCeC9g08h5vuP9UqvPHKKSVrKFXGa1v";
-    private static final String BD_CLIENT_SECRET = "iYCeC9g08h5vuP9UqvPHKKSVrKFXGa1v";
+    private static final String BD_SERVER_CREATE = "https://tv.earxo.com/oauth/baidu_create.php";
+    private static final String BD_SERVER_STATUS = "https://tv.earxo.com/oauth/baidu_status.php";
+    private static final String BD_SERVER_REFRESH = "https://tv.earxo.com/oauth/baidu_refresh.php";
 
     private Context savedContext;
     private Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -534,26 +532,38 @@ public class QuarkPersonalConfig extends Spider {
             + "- 支持搜索网盘内的文件夹。";
     }
 
-    // ========== 百度网盘 OAuth2 登录系统 ==========
+    // ========== 百度网盘 OAuth2 登录系统（后端中转） ==========
+
+    private String baiduOAuthState = "";
 
     private void doBaiduOAuthLogin() throws Exception {
         loginSuccess = false;
         loginCancelled = false;
 
-        String authUrl = BD_OAUTH_AUTHORIZE
-            + "?response_type=code"
-            + "&client_id=" + BD_CLIENT_ID
-            + "&redirect_uri=oob"
-            + "&scope=basic,netdisk"
-            + "&qrcode=1"
-            + "&device_id=" + BD_CLIENT_ID;
+        // 1. 调用后端创建授权会话，获取 auth_url 和 state
+        SpiderDebug.log("QuarkPersonalConfig: calling baidu_create...");
+        String createUrl = BD_SERVER_CREATE
+            + "?appkey=tvbox&sign=&t=" + System.currentTimeMillis();
 
-        SpiderDebug.log("QuarkPersonalConfig: baidu authUrl=" + authUrl);
+        String body = OkHttp.string(createUrl, new HashMap<>());
+        SpiderDebug.log("QuarkPersonalConfig: baidu_create response=" + (body != null ? body.substring(0, Math.min(300, body.length())) : "null"));
 
+        Map<String, Object> resp = Json.parseSafe(body, Map.class);
+        if (resp == null || resp.get("auth_url") == null || resp.get("state") == null) {
+            throw new Exception("创建授权会话失败");
+        }
+
+        String authUrl = String.valueOf(resp.get("auth_url"));
+        baiduOAuthState = String.valueOf(resp.get("state"));
+
+        SpiderDebug.log("QuarkPersonalConfig: baidu authUrl=" + authUrl + " state=" + baiduOAuthState);
+
+        // 2. 在主线程显示 QR 码
+        final String finalAuthUrl = authUrl;
         mainHandler.post(new Runnable() {
             @Override
             public void run() {
-                showBaiduQRDialog(authUrl);
+                showBaiduQRDialog(finalAuthUrl);
             }
         });
     }
@@ -584,7 +594,7 @@ public class QuarkPersonalConfig extends Spider {
             layout.addView(imageView);
 
             TextView hintView = new TextView(activity);
-            hintView.setText("请使用百度APP或百度网盘APP扫码登录\n扫码后页面会显示授权码，请在下方输入");
+            hintView.setText("请使用百度APP扫码授权\n扫码后请等待自动登录");
             hintView.setTextSize(14);
             hintView.setTextColor(Color.WHITE);
             hintView.setGravity(Gravity.CENTER);
@@ -594,36 +604,9 @@ public class QuarkPersonalConfig extends Spider {
             hintView.setLayoutParams(hintParams);
             layout.addView(hintView);
 
-            final EditText codeInput = new EditText(activity);
-            codeInput.setHint("请输入授权码");
-            codeInput.setTextSize(14);
-            codeInput.setSingleLine(true);
-            LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            inputParams.topMargin = ResUtil.dp2px(8);
-            codeInput.setLayoutParams(inputParams);
-            layout.addView(codeInput);
-
             qrDialog = new AlertDialog.Builder(activity)
                 .setTitle("百度网盘登录")
                 .setView(layout)
-                .setPositiveButton("确认", new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        String code = codeInput.getText().toString().trim();
-                        if (!code.isEmpty()) {
-                            final String finalCode = code;
-                            new Thread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    exchangeCodeForToken(finalCode);
-                                }
-                            }).start();
-                        } else {
-                            Notify.show("请输入授权码");
-                        }
-                    }
-                })
                 .setNegativeButton("取消", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
@@ -634,72 +617,92 @@ public class QuarkPersonalConfig extends Spider {
                 .show();
             qrDialog.setCanceledOnTouchOutside(false);
 
+            // 3. 启动轮询线程
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    pollBaiduOAuthStatus();
+                }
+            }).start();
+
         } catch (Exception e) {
             SpiderDebug.log("BaiduOAuthLogin showQRDialog error: " + e.getMessage());
         }
     }
 
-    private void exchangeCodeForToken(String code) {
-        try {
-            Map<String, String> params = new HashMap<>();
-            params.put("grant_type", "authorization_code");
-            params.put("code", code);
-            params.put("client_id", BD_CLIENT_ID);
-            params.put("client_secret", BD_CLIENT_SECRET);
-            params.put("redirect_uri", "oob");
+    private void pollBaiduOAuthStatus() {
+        SpiderDebug.log("QuarkPersonalConfig: start polling baidu status, state=" + baiduOAuthState);
 
-            StringBuilder url = new StringBuilder(BD_OAUTH_TOKEN);
-            boolean first = true;
-            for (Map.Entry<String, String> entry : params.entrySet()) {
-                url.append(first ? "?" : "&");
-                url.append(URLEncoder.encode(entry.getKey(), "UTF-8"));
-                url.append("=");
-                url.append(URLEncoder.encode(entry.getValue(), "UTF-8"));
-                first = false;
-            }
-
-            SpiderDebug.log("QuarkPersonalConfig: exchanging code for token...");
-            String body = OkHttp.string(url.toString(), new HashMap<>());
-            Map<String, Object> resp = Json.parseSafe(body, Map.class);
-
-            SpiderDebug.log("QuarkPersonalConfig: token response=" + (body != null ? body.substring(0, Math.min(200, body.length())) : "null"));
-
-            if (resp != null && resp.get("access_token") != null) {
-                String accessToken = String.valueOf(resp.get("access_token"));
-                String refreshToken = String.valueOf(resp.get("refresh_token"));
-
-                baiduAccessToken = accessToken;
-                baiduRefreshToken = refreshToken;
-                writeBaiduTokenToFile(refreshToken, accessToken);
-
+        long startTime = System.currentTimeMillis();
+        while (!loginCancelled && !loginSuccess) {
+            // 超时检查（5分钟）
+            if (System.currentTimeMillis() - startTime > QR_TIMEOUT_MS) {
+                SpiderDebug.log("QuarkPersonalConfig: baidu oauth timeout");
                 mainHandler.post(new Runnable() {
                     @Override
                     public void run() {
                         dismissDialog();
-                        Notify.show("百度网盘登录成功！");
+                        Notify.show("授权超时，请重新扫码");
                     }
                 });
-
-                loginSuccess = true;
-            } else {
-                final String errorMsg = resp != null && resp.get("error_description") != null
-                    ? String.valueOf(resp.get("error_description"))
-                    : "获取Token失败，请检查授权码";
-                mainHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        Notify.show(errorMsg);
-                    }
-                });
+                break;
             }
-        } catch (Exception e) {
-            SpiderDebug.log("BaiduOAuthLogin exchangeCode error: " + e.getMessage());
-            mainHandler.post(new Runnable() {
-                @Override
-                public void run() {
-                    Notify.show("换取Token失败: " + e.getMessage());
+
+            try {
+                Thread.sleep(POLL_INTERVAL_MS);
+            } catch (InterruptedException e) {
+                break;
+            }
+
+            if (loginCancelled) break;
+
+            try {
+                String statusUrl = BD_SERVER_STATUS
+                    + "?appkey=tvbox&state=" + URLEncoder.encode(baiduOAuthState, "UTF-8")
+                    + "&sign=&t=" + System.currentTimeMillis();
+
+                String body = OkHttp.string(statusUrl, new HashMap<>());
+                Map<String, Object> resp = Json.parseSafe(body, Map.class);
+
+                if (resp == null) continue;
+
+                String status = resp.get("status") != null ? String.valueOf(resp.get("status")) : "";
+
+                if ("success".equals(status)) {
+                    String accessToken = resp.get("access_token") != null ? String.valueOf(resp.get("access_token")) : "";
+                    String refreshToken = resp.get("refresh_token") != null ? String.valueOf(resp.get("refresh_token")) : "";
+
+                    if (!refreshToken.isEmpty()) {
+                        baiduAccessToken = accessToken;
+                        baiduRefreshToken = refreshToken;
+                        writeBaiduTokenToFile(refreshToken, accessToken);
+                        loginSuccess = true;
+
+                        SpiderDebug.log("QuarkPersonalConfig: baidu login success!");
+
+                        mainHandler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                dismissDialog();
+                                Notify.show("百度网盘登录成功！");
+                            }
+                        });
+                    }
+                } else if ("expired".equals(status)) {
+                    SpiderDebug.log("QuarkPersonalConfig: baidu oauth session expired");
+                    mainHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            dismissDialog();
+                            Notify.show("授权已过期，请重新扫码");
+                        }
+                    });
+                    break;
                 }
-            });
+                // status=pending: 继续轮询
+            } catch (Exception e) {
+                SpiderDebug.log("QuarkPersonalConfig: poll baidu status error: " + e.getMessage());
+            }
         }
     }
 
