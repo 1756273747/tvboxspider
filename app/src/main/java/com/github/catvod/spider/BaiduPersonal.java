@@ -244,13 +244,11 @@ public class BaiduPersonal extends Spider {
             String downloadUrl = getDownloadUrl(fsId);
             if (downloadUrl == null || downloadUrl.isEmpty()) return "";
 
+            // .nfo/txt文件很小，直接用App UA下载，不走ProxyServer
             Map<String, String> headers = new HashMap<>();
+            headers.put("User-Agent", BD_APP_USER_AGENT);
             headers.put("Cookie", cookie);
-            headers.put("User-Agent", BD_USER_AGENT);
-            headers.put("Referer", "https://pan.baidu.com/");
-
-            String proxyUrl = ProxyServer.INSTANCE.buildProxyUrl(downloadUrl, headers);
-            String content = OkHttp.string(proxyUrl, new HashMap<>(), new HashMap<>());
+            String content = OkHttp.string(downloadUrl, new HashMap<>(), headers);
             SpiderDebug.log("BaiduPersonal readTextFile path=" + path + " contentLen=" + (content != null ? content.length() : 0));
             return content != null ? content : "";
         } catch (Exception e) {
@@ -749,7 +747,23 @@ public class BaiduPersonal extends Spider {
             if (infoList != null && !infoList.isEmpty()) {
                 Object dlink = infoList.get(0).get("dlink");
                 if (dlink != null) {
-                    return String.valueOf(dlink);
+                    String dlinkStr = String.valueOf(dlink);
+                    // 预解析302重定向，获取最终CDN直链
+                    // ProxyServer使用OkHttp默认跟随302时会丢失自定义headers(Cookie/App UA)
+                    // 所以这里先用App UA手动解析302，拿到CDN URL再传给ProxyServer
+                    try {
+                        Map<String, String> appHeaders = new HashMap<>();
+                        appHeaders.put("User-Agent", BD_APP_USER_AGENT);
+                        appHeaders.put("Cookie", cookie);
+                        String cdnUrl = OkHttp.getLocation(dlinkStr, appHeaders);
+                        if (cdnUrl != null && !cdnUrl.isEmpty()) {
+                            SpiderDebug.log("BaiduPersonal getDownloadUrl resolved CDN: " + cdnUrl.substring(0, Math.min(80, cdnUrl.length())));
+                            return cdnUrl;
+                        }
+                    } catch (Exception e) {
+                        SpiderDebug.log("BaiduPersonal getDownloadUrl resolve 302 failed: " + e.getMessage() + ", fallback to dlink");
+                    }
+                    return dlinkStr;
                 }
             }
         }
