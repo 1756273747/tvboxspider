@@ -535,7 +535,7 @@ public class QuarkPersonalConfig extends Spider {
         loginCancelled = false;
         baiduGid = generateBaiduGid();
 
-        // 1. 获取二维码 sign 和图片 URL
+        // 1. 获取二维码 sign
         SpiderDebug.log("QuarkPersonalConfig: fetching baidu qrcode...");
         String qrcodeUrl = BD_PASSPORT_HOST + "/v2/api/getqrcode?lp=pc&qrloginfrom=pc&gid=" + baiduGid
             + "&callback=tangram_guid_" + System.currentTimeMillis()
@@ -552,32 +552,33 @@ public class QuarkPersonalConfig extends Spider {
         // 解析 JSONP: tangram_guid_xxx({"errno":0,"imgurl":"...","sign":"..."})
         String jsonStr = extractJsonFromJsonp(result);
         Map<String, Object> resp = Json.parseSafe(jsonStr, Map.class);
-        if (resp == null || !resp.containsKey("sign") || !resp.containsKey("imgurl")) {
+        if (resp == null || !resp.containsKey("sign")) {
             throw new Exception("获取二维码失败");
         }
 
         baiduSign = String.valueOf(resp.get("sign"));
-        String imgUrl = String.valueOf(resp.get("imgurl"));
-        if (imgUrl.startsWith("//")) imgUrl = "https:" + imgUrl;
-        else if (imgUrl.startsWith("/")) imgUrl = BD_PASSPORT_HOST + imgUrl;
-        else if (!imgUrl.startsWith("http")) imgUrl = "https://" + imgUrl;
 
-        SpiderDebug.log("QuarkPersonalConfig: baidu sign=" + baiduSign + " imgUrl=" + imgUrl);
+        // 2. 构造扫码登录页面 URL（用户扫码后打开的页面）
+        String qrLoginUrl = "https://wappass.baidu.com/wp/?qrlogin&t=" + System.currentTimeMillis()
+            + "&error=0&sign=" + baiduSign + "&cmd=login&lp=pc&tpl=netdisk&uaonly="
+            + "&client_id=&adapter=3&client=&qrloginfrom=pc&wechat=0&traceid=";
 
-        // 2. 在主线程显示二维码图片
-        final String finalImgUrl = imgUrl;
+        SpiderDebug.log("QuarkPersonalConfig: baidu sign=" + baiduSign + " qrLoginUrl=" + qrLoginUrl);
+
+        // 3. 在主线程显示二维码（参照夸克网盘，用 QRCode.getBitmap 生成）
+        final String finalQrUrl = qrLoginUrl;
         mainHandler.post(new Runnable() {
             @Override
             public void run() {
-                showBaiduQRImageDialog(finalImgUrl);
+                showBaiduQRDialog(finalQrUrl);
             }
         });
 
-        // 3. 轮询扫码状态
+        // 4. 轮询扫码状态
         pollBaiduLoginStatus();
     }
 
-    private void showBaiduQRImageDialog(String imgUrl) {
+    private void showBaiduQRDialog(String qrUrl) {
         try {
             dismissLoadingDialog();
             Activity activity = Init.getActivity();
@@ -593,36 +594,12 @@ public class QuarkPersonalConfig extends Spider {
 
             ImageView imageView = new ImageView(activity);
             try {
-                // 下载二维码图片 - 参照 BaiDuYunHandler.kt 使用 OkHttp.newCall 直接获取字节
-                Map<String, String> imgHeaders = new HashMap<>();
-                imgHeaders.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-                imgHeaders.put("Referer", "https://pan.baidu.com/");
-
-                okhttp3.Request request = new okhttp3.Request.Builder()
-                    .url(imgUrl)
-                    .headers(okhttp3.Headers.of(imgHeaders))
-                    .build();
-                okhttp3.Response response = OkHttp.newCall(request);
-
-                if (response.code() == 200 && response.body() != null) {
-                    byte[] imgBytes = response.body().bytes();
-                    if (imgBytes.length > 0) {
-                        Bitmap bitmap = QRCode.Bytes2Bimap(imgBytes);
-                        if (bitmap != null) {
-                            int size = ResUtil.dp2px(200);
-                            imageView.setImageBitmap(Bitmap.createScaledBitmap(bitmap, size, size, true));
-                        } else {
-                            imageView.setImageResource(android.R.drawable.ic_menu_gallery);
-                        }
-                    } else {
-                        imageView.setImageResource(android.R.drawable.ic_menu_gallery);
-                    }
-                } else {
-                    SpiderDebug.log("BaiduQR: download image failed, code=" + response.code());
-                    imageView.setImageResource(android.R.drawable.ic_menu_gallery);
-                }
+                // 参照夸克网盘：用 QRCode.getBitmap 把 URL 生成二维码图片
+                int size = ResUtil.dp2px(200);
+                Bitmap qrBitmap = QRCode.getBitmap(qrUrl, size, 2);
+                imageView.setImageBitmap(qrBitmap);
             } catch (Exception e) {
-                SpiderDebug.log("BaiduQR: load image failed: " + e.getMessage());
+                SpiderDebug.log("BaiduQR: generate QR bitmap failed: " + e.getMessage());
                 imageView.setImageResource(android.R.drawable.ic_menu_gallery);
             }
             layout.addView(imageView);
