@@ -593,18 +593,32 @@ public class QuarkPersonalConfig extends Spider {
 
             ImageView imageView = new ImageView(activity);
             try {
-                // 下载二维码图片
-                OkResult imgResult = OkHttp.get(imgUrl, new HashMap<>(), new HashMap<>());
-                byte[] imgBytes = imgResult.getBody() != null ? imgResult.getBody().getBytes() : null;
-                if (imgBytes != null && imgBytes.length > 0) {
-                    Bitmap bitmap = android.graphics.BitmapFactory.decodeByteArray(imgBytes, 0, imgBytes.length);
-                    if (bitmap != null) {
-                        int size = ResUtil.dp2px(200);
-                        imageView.setImageBitmap(Bitmap.createScaledBitmap(bitmap, size, size, true));
+                // 下载二维码图片 - 参照 BaiDuYunHandler.kt 使用 OkHttp.newCall 直接获取字节
+                Map<String, String> imgHeaders = new HashMap<>();
+                imgHeaders.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+                imgHeaders.put("Referer", "https://pan.baidu.com/");
+
+                okhttp3.Request request = new okhttp3.Request.Builder()
+                    .url(imgUrl)
+                    .headers(okhttp3.Headers.of(imgHeaders))
+                    .build();
+                okhttp3.Response response = OkHttp.newCall(request);
+
+                if (response.code() == 200 && response.body() != null) {
+                    byte[] imgBytes = response.body().bytes();
+                    if (imgBytes.length > 0) {
+                        Bitmap bitmap = QRCode.Bytes2Bimap(imgBytes);
+                        if (bitmap != null) {
+                            int size = ResUtil.dp2px(200);
+                            imageView.setImageBitmap(Bitmap.createScaledBitmap(bitmap, size, size, true));
+                        } else {
+                            imageView.setImageResource(android.R.drawable.ic_menu_gallery);
+                        }
                     } else {
                         imageView.setImageResource(android.R.drawable.ic_menu_gallery);
                     }
                 } else {
+                    SpiderDebug.log("BaiduQR: download image failed, code=" + response.code());
                     imageView.setImageResource(android.R.drawable.ic_menu_gallery);
                 }
             } catch (Exception e) {
