@@ -143,7 +143,9 @@ public class BaiduPersonal extends Spider {
         }
 
         try {
+            SpiderDebug.log("BaiduPersonal homeContent listing rootPath=" + rootPath);
             List<Folder> folders = listFolders(rootPath);
+            SpiderDebug.log("BaiduPersonal homeContent rootPath folders count=" + folders.size());
             categoryNameMap.clear();
             for (Folder folder : folders) {
                 classes.add(new Class(folder.getPath(), folder.getName()));
@@ -153,6 +155,7 @@ public class BaiduPersonal extends Spider {
             SpiderDebug.log("BaiduPersonal homeContent rootPath error: " + e.getMessage());
             try {
                 List<Folder> rootFolders = listFolders("/");
+                SpiderDebug.log("BaiduPersonal homeContent root dir folders count=" + rootFolders.size());
                 categoryNameMap.clear();
                 for (Folder folder : rootFolders) {
                     classes.add(new Class(folder.getPath(), folder.getName()));
