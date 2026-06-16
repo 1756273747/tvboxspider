@@ -589,23 +589,30 @@ public class BaiduPersonal extends Spider {
         String url = BD_API_HOST + "/rest/2.0/xpan/file?method=list&dir=" + java.net.URLEncoder.encode(dirPath, "UTF-8") + "&web=web&start=0&limit=100&order=name&desc=0";
         Map<String, String> headers = getApiHeaders();
         String result = OkHttp.string(url, new HashMap<>(), headers);
+        SpiderDebug.log("BaiduPersonal listFolders path=" + dirPath + " result=" + (result != null ? result.substring(0, Math.min(200, result.length())) : "null"));
         Map<String, Object> json = Json.parseSafe(result, Map.class);
 
         List<Folder> folders = new ArrayList<>();
-        if (json != null && json.get("list") != null) {
-            List<Map<String, Object>> list = (List<Map<String, Object>>) json.get("list");
-            if (list != null) {
-                for (Map<String, Object> itemData : list) {
-                    int isdir = 0;
-                    Object isdirObj = itemData.get("isdir");
-                    if (isdirObj instanceof Number) isdir = ((Number) isdirObj).intValue();
-                    else isdir = Integer.parseInt(String.valueOf(isdirObj));
+        if (json != null) {
+            Object errno = json.get("errno");
+            Object errmsg = json.get("errmsg");
+            SpiderDebug.log("BaiduPersonal listFolders errno=" + errno + " errmsg=" + errmsg);
+            if (json.get("list") != null) {
+                List<Map<String, Object>> list = (List<Map<String, Object>>) json.get("list");
+                if (list != null) {
+                    SpiderDebug.log("BaiduPersonal listFolders list size=" + list.size());
+                    for (Map<String, Object> itemData : list) {
+                        int isdir = 0;
+                        Object isdirObj = itemData.get("isdir");
+                        if (isdirObj instanceof Number) isdir = ((Number) isdirObj).intValue();
+                        else isdir = Integer.parseInt(String.valueOf(isdirObj));
 
-                    if (isdir == 1) {
-                        Folder folder = new Folder();
-                        folder.setPath(String.valueOf(itemData.get("path")));
-                        folder.setName(String.valueOf(itemData.get("server_filename")));
-                        folders.add(folder);
+                        if (isdir == 1) {
+                            Folder folder = new Folder();
+                            folder.setPath(String.valueOf(itemData.get("path")));
+                            folder.setName(String.valueOf(itemData.get("server_filename")));
+                            folders.add(folder);
+                        }
                     }
                 }
             }
