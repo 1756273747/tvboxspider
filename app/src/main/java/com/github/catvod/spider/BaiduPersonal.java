@@ -36,7 +36,7 @@ import java.util.regex.Pattern;
  */
 public class BaiduPersonal extends Spider {
 
-    private String rootPath = "视频";
+    private String rootPath = "/视频";
     private String defaultPic = "";
     private List<String> picExts = Arrays.asList("jpg", "jpeg", "png", "webp");
     private List<String> videoExts = Arrays.asList("mp4", "mkv", "avi", "wmv", "flv", "iso", "mpg", "ts", "m2ts", "mov");
