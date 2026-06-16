@@ -59,6 +59,9 @@ public class QuarkPersonalConfig extends Spider {
     private static final String BD_SERVER_CREATE = "https://tv.earxo.com/oauth/baidu_create.php";
     private static final String BD_SERVER_STATUS = "https://tv.earxo.com/oauth/baidu_status.php";
     private static final String BD_SERVER_REFRESH = "https://tv.earxo.com/oauth/baidu_refresh.php";
+    private static final String BD_APP_KEY = "pyScyxidP0IkAW7u9aL9aoZX7Nbr7dRS";
+    private static final String BD_APP_SECRET = "tpmmK2P8PyAUDmxFQIoImcNj0qDJhlpG";
+    private static final String BD_SIGN_KEY = "ckUIQTj^1m4-FrLLcXlngOX5PRyv9+i*";
 
     private Context savedContext;
     private Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -532,6 +535,42 @@ public class QuarkPersonalConfig extends Spider {
             + "- 支持搜索网盘内的文件夹。";
     }
 
+    /**
+     * 生成签名（与后端 Arr_sign 函数一致）
+     * 规则：去掉 sign/app/act 字段后，按 key 排序拼接 k=v&...&key，然后 MD5
+     */
+    private String makeSign(Map<String, String> params) {
+        try {
+            // 去掉 sign/app/act
+            Map<String, String> filtered = new HashMap<>();
+            for (Map.Entry<String, String> entry : params.entrySet()) {
+                String k = entry.getKey();
+                if (!k.equals("sign") && !k.equals("app") && !k.equals("act")) {
+                    filtered.put(k, entry.getValue());
+                }
+            }
+            // 按 key 排序拼接
+            List<String> keys = new ArrayList<>(filtered.keySet());
+            java.util.Collections.sort(keys);
+            StringBuilder sb = new StringBuilder();
+            for (String k : keys) {
+                sb.append(k).append("=").append(filtered.get(k)).append("&");
+            }
+            sb.append(BD_SIGN_KEY);
+            // MD5
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
+            byte[] digest = md.digest(sb.toString().getBytes("UTF-8"));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : digest) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+        } catch (Exception e) {
+            SpiderDebug.log("QuarkPersonalConfig makeSign error: " + e.getMessage());
+            return "";
+        }
+    }
+
     // ========== 百度网盘 OAuth2 登录系统（后端中转） ==========
 
     private String baiduOAuthState = "";
@@ -542,8 +581,15 @@ public class QuarkPersonalConfig extends Spider {
 
         // 1. 调用后端创建授权会话，获取 auth_url 和 state
         SpiderDebug.log("QuarkPersonalConfig: calling baidu_create...");
+        long t = System.currentTimeMillis();
+        String sign = makeSign(new HashMap<String, String>() {{
+            put("appkey", BD_APP_KEY);
+            put("t", String.valueOf(t));
+        }});
         String createUrl = BD_SERVER_CREATE
-            + "?appkey=tvbox&sign=&t=" + System.currentTimeMillis();
+            + "?appkey=" + BD_APP_KEY
+            + "&sign=" + sign
+            + "&t=" + t;
 
         String body = OkHttp.string(createUrl, new HashMap<>());
         SpiderDebug.log("QuarkPersonalConfig: baidu_create response=" + (body != null ? body.substring(0, Math.min(300, body.length())) : "null"));
@@ -657,9 +703,17 @@ public class QuarkPersonalConfig extends Spider {
             if (loginCancelled) break;
 
             try {
+                long t2 = System.currentTimeMillis();
+                String sign2 = makeSign(new HashMap<String, String>() {{
+                    put("appkey", BD_APP_KEY);
+                    put("state", baiduOAuthState);
+                    put("t", String.valueOf(t2));
+                }});
                 String statusUrl = BD_SERVER_STATUS
-                    + "?appkey=tvbox&state=" + URLEncoder.encode(baiduOAuthState, "UTF-8")
-                    + "&sign=&t=" + System.currentTimeMillis();
+                    + "?appkey=" + BD_APP_KEY
+                    + "&state=" + URLEncoder.encode(baiduOAuthState, "UTF-8")
+                    + "&sign=" + sign2
+                    + "&t=" + t2;
 
                 String body = OkHttp.string(statusUrl, new HashMap<>());
                 Map<String, Object> resp = Json.parseSafe(body, Map.class);
