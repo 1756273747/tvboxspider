@@ -522,7 +522,7 @@ public class BaiduPersonal extends Spider {
         }
 
         try {
-            String encodedKey = java.net.URLEncoder.encode(key, "UTF-8");
+            String encodedKey = encodeUrl(key);
             String searchUrl = BD_API_HOST + "/rest/2.0/xpan/file?method=search&key=" + encodedKey + "&dir=/";
             Map<String, String> headers = getApiHeaders();
             String result = OkHttp.string(searchUrl, new HashMap<>(), headers);
@@ -586,7 +586,7 @@ public class BaiduPersonal extends Spider {
     // ========== 网盘API ==========
 
     private List<Folder> listFolders(String dirPath) throws Exception {
-        String url = BD_API_HOST + "/rest/2.0/xpan/file?method=list&dir=" + java.net.URLEncoder.encode(dirPath, "UTF-8") + "&web=web&start=0&limit=100&order=name&desc=0";
+        String url = BD_API_HOST + "/rest/2.0/xpan/file?method=list&dir=" + encodeUrl(dirPath) + "&web=web&start=0&limit=100&order=name&desc=0";
         Map<String, String> headers = getApiHeaders();
         String result = OkHttp.string(url, new HashMap<>(), headers);
         SpiderDebug.log("BaiduPersonal listFolders path=" + dirPath + " result=" + (result != null ? result.substring(0, Math.min(200, result.length())) : "null"));
@@ -621,7 +621,7 @@ public class BaiduPersonal extends Spider {
     }
 
     private List<FileItem> listFileItems(String dirPath) throws Exception {
-        String url = BD_API_HOST + "/rest/2.0/xpan/file?method=list&dir=" + java.net.URLEncoder.encode(dirPath, "UTF-8") + "&web=web&start=0&limit=200&order=name&desc=0";
+        String url = BD_API_HOST + "/rest/2.0/xpan/file?method=list&dir=" + encodeUrl(dirPath) + "&web=web&start=0&limit=200&order=name&desc=0";
         Map<String, String> headers = getApiHeaders();
         String result = OkHttp.string(url, new HashMap<>(), headers);
         Map<String, Object> json = Json.parseSafe(result, Map.class);
@@ -660,7 +660,7 @@ public class BaiduPersonal extends Spider {
         boolean hasMore = true;
 
         while (hasMore) {
-            String url = BD_API_HOST + "/rest/2.0/xpan/file?method=list&dir=" + java.net.URLEncoder.encode(dirPath, "UTF-8") + "&web=web&start=" + start + "&limit=" + limit + "&order=name&desc=0";
+            String url = BD_API_HOST + "/rest/2.0/xpan/file?method=list&dir=" + encodeUrl(dirPath) + "&web=web&start=" + start + "&limit=" + limit + "&order=name&desc=0";
             Map<String, String> headers = getApiHeaders();
             String result = OkHttp.string(url, new HashMap<>(), headers);
             Map<String, Object> json = Json.parseSafe(result, Map.class);
@@ -746,7 +746,7 @@ public class BaiduPersonal extends Spider {
     }
 
     private String getVideoPlayUrl(String path, long fsId) throws Exception {
-        String url = BD_API_HOST + "/api/mediainfo?type=VideoURL&path=" + java.net.URLEncoder.encode(path, "UTF-8")
+        String url = BD_API_HOST + "/api/mediainfo?type=VideoURL&path=" + encodeUrl(path)
             + "&fs_id=" + fsId + "&devuid=&clienttype=1&nom3u8=1&dlink=1&media=1&origin=dlna";
         Map<String, String> headers = getApiHeaders();
         String result = OkHttp.string(url, new HashMap<>(), headers);
@@ -796,6 +796,30 @@ public class BaiduPersonal extends Spider {
     private String getExtension(String name) {
         int dot = name.lastIndexOf('.');
         return dot > 0 ? name.substring(dot + 1) : "";
+    }
+
+    private String encodeUrl(String str) {
+        try {
+            StringBuilder sb = new StringBuilder();
+            for (char c : str.toCharArray()) {
+                if (c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.' || c == '~' || c == '/') {
+                    sb.append(c);
+                } else {
+                    byte[] bytes = String.valueOf(c).getBytes("UTF-8");
+                    for (byte b : bytes) {
+                        sb.append('%');
+                        sb.append(String.format("%02X", b & 0xFF));
+                    }
+                }
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            try {
+                return java.net.URLEncoder.encode(str, "UTF-8");
+            } catch (Exception e2) {
+                return str;
+            }
+        }
     }
 
     private String getFolderName(String path) {
