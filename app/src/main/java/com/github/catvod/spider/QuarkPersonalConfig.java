@@ -32,7 +32,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
-import java.net.URLEncoder;
+// URLEncoder no longer needed for Baidu QR login
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -54,14 +54,12 @@ public class QuarkPersonalConfig extends Spider {
     private static final int QR_TIMEOUT_MS = 5 * 60 * 1000;
     private static final int POLL_INTERVAL_MS = 3000;
 
-    // 百度网盘 OAuth2 后端接口
-    private static final String BD_TOKEN_FILE = "baidu_token.json";
-    private static final String BD_SERVER_CREATE = "https://tv.earxo.com/oauth/baidu_create.php";
-    private static final String BD_SERVER_STATUS = "https://tv.earxo.com/oauth/baidu_status.php";
-    private static final String BD_SERVER_REFRESH = "https://tv.earxo.com/oauth/baidu_refresh.php";
-    private static final String BD_APP_KEY = "pyScyxidP0IkAW7u9aL9aoZX7Nbr7dRS";
-    private static final String BD_APP_SECRET = "tpmmK2P8PyAUDmxFQIoImcNj0qDJhlpG";
-    private static final String BD_SIGN_KEY = "ckUIQTj^1m4-FrLLcXlngOX5PRyv9+i*";
+    // 百度网盘网页扫码登录接口（复用 TVBox 后端二维码系统）
+    private static final String BD_COOKIE_FILE = "baidu_cookie.json";
+    private static final String QR_API_URL = "https://tv.earxo.com/api.php";
+    private static final String QR_APP_ID = "10000";
+    private static final String QR_APP_KEY = "pyScyxidP0IkAW7u9aL9aoZX7Nbr7dRS";
+    private static final String QR_SIGN_KEY = "ckUIQTj^1m4-FrLLcXlngOX5PRyv9+i*";
 
     private Context savedContext;
     private Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -71,9 +69,8 @@ public class QuarkPersonalConfig extends Spider {
     private AlertDialog qrDialog;
     private AlertDialog loadingDialog;
 
-    // 百度网盘 Token 字段
-    private String baiduRefreshToken = "";
-    private String baiduAccessToken = "";
+    // 百度网盘 Cookie 字段
+    private String baiduCookie = "";
 
     // ========== Spider 生命周期 ==========
 
@@ -82,8 +79,8 @@ public class QuarkPersonalConfig extends Spider {
         SpiderDebug.log("QuarkPersonalConfig init...");
         savedContext = context;
         cookie = readCookieFromFile();
-        readBaiduTokenFromFile();
-        SpiderDebug.log("QuarkPersonalConfig init done, quark valid=" + isCookieValid() + ", baidu valid=" + isBaiduTokenValid());
+        readBaiduCookieFromFile();
+        SpiderDebug.log("QuarkPersonalConfig init done, quark valid=" + isCookieValid() + ", baidu valid=" + isBaiduCookieValid());
     }
 
     @Override
@@ -147,7 +144,7 @@ public class QuarkPersonalConfig extends Spider {
     }
 
     private String buildBaiduCards(List<Vod> list) {
-        boolean loggedIn = isBaiduTokenValid();
+        boolean loggedIn = isBaiduCookieValid();
 
         Vod loginVod = new Vod();
         loginVod.setVodId("baidu_config###登录");
@@ -227,9 +224,9 @@ public class QuarkPersonalConfig extends Spider {
                         @Override
                         public void run() {
                             try {
-                                doBaiduOAuthLogin();
+                                doBaiduQRLogin();
                             } catch (Exception e) {
-                                SpiderDebug.log("QuarkPersonalConfig doBaiduOAuthLogin error: " + e.getMessage());
+                                SpiderDebug.log("QuarkPersonalConfig doBaiduQRLogin error: " + e.getMessage());
                                 dismissLoadingDialog();
                                 mainHandler.post(new Runnable() {
                                     @Override
@@ -318,15 +315,15 @@ public class QuarkPersonalConfig extends Spider {
         return cookie != null && !cookie.isEmpty() && cookie.contains("__pus");
     }
 
-    // ========== 百度网盘 Token 持久化 ==========
+    // ========== 百度网盘 Cookie 持久化 ==========
 
-    private File getBaiduTokenFile() {
-        return new File(savedContext.getFilesDir(), BD_TOKEN_FILE);
+    private File getBaiduCookieFile() {
+        return new File(savedContext.getFilesDir(), BD_COOKIE_FILE);
     }
 
-    private void readBaiduTokenFromFile() {
+    private void readBaiduCookieFromFile() {
         try {
-            File file = getBaiduTokenFile();
+            File file = getBaiduCookieFile();
             if (!file.exists()) return;
 
             BufferedReader reader = new BufferedReader(new FileReader(file));
@@ -339,39 +336,36 @@ public class QuarkPersonalConfig extends Spider {
 
             Map<String, Object> json = Json.parseSafe(sb.toString(), Map.class);
             if (json != null) {
-                Object rt = json.get("refresh_token");
-                Object at = json.get("access_token");
-                if (rt != null) baiduRefreshToken = String.valueOf(rt);
-                if (at != null) baiduAccessToken = String.valueOf(at);
+                Object ck = json.get("cookie");
+                if (ck != null) baiduCookie = String.valueOf(ck);
             }
         } catch (Exception e) {
-            SpiderDebug.log("QuarkPersonalConfig readBaiduToken error: " + e.getMessage());
+            SpiderDebug.log("QuarkPersonalConfig readBaiduCookie error: " + e.getMessage());
         }
     }
 
-    private void writeBaiduTokenToFile(String refreshToken, String accessToken) {
+    private void writeBaiduCookieToFile(String cookieStr) {
         try {
             Map<String, Object> json = new HashMap<>();
-            json.put("refresh_token", refreshToken);
-            json.put("access_token", accessToken);
+            json.put("cookie", cookieStr);
             json.put("update_time", System.currentTimeMillis());
 
-            File file = getBaiduTokenFile();
+            File file = getBaiduCookieFile();
             FileWriter writer = new FileWriter(file);
             writer.write(Json.toJson(json));
             writer.close();
-            SpiderDebug.log("QuarkPersonalConfig: baidu token saved to file");
+            SpiderDebug.log("QuarkPersonalConfig: baidu cookie saved to file");
         } catch (Exception e) {
-            SpiderDebug.log("QuarkPersonalConfig writeBaiduToken error: " + e.getMessage());
+            SpiderDebug.log("QuarkPersonalConfig writeBaiduCookie error: " + e.getMessage());
         }
     }
 
-    private boolean isBaiduTokenValid() {
-        return baiduRefreshToken != null && !baiduRefreshToken.isEmpty();
+    private boolean isBaiduCookieValid() {
+        return baiduCookie != null && !baiduCookie.isEmpty();
     }
 
-    private void deleteBaiduTokenFile() {
-        File file = getBaiduTokenFile();
+    private void deleteBaiduCookieFile() {
+        File file = getBaiduCookieFile();
         if (file != null && file.exists()) {
             file.delete();
         }
@@ -460,9 +454,8 @@ public class QuarkPersonalConfig extends Spider {
                     Activity activity = Init.getActivity();
                     if (activity == null || activity.isFinishing()) {
                         Notify.show("已退出登录，本地凭证已清除");
-                        baiduRefreshToken = "";
-                        baiduAccessToken = "";
-                        deleteBaiduTokenFile();
+                        baiduCookie = "";
+                        deleteBaiduCookieFile();
                         return;
                     }
                     new AlertDialog.Builder(activity)
@@ -471,9 +464,8 @@ public class QuarkPersonalConfig extends Spider {
                         .setPositiveButton("确定", new DialogInterface.OnClickListener() {
                             @Override
                             public void onClick(DialogInterface dialog, int which) {
-                                baiduRefreshToken = "";
-                                baiduAccessToken = "";
-                                deleteBaiduTokenFile();
+                                baiduCookie = "";
+                                deleteBaiduCookieFile();
                                 Notify.show("已退出登录，本地凭证已清除");
                             }
                         })
@@ -526,9 +518,15 @@ public class QuarkPersonalConfig extends Spider {
 
     private String buildBaiduTutorialContent() {
         return "【百度网盘使用说明】\n\n"
-            + "1. 首次使用需要在本配置线路中扫码登录百度网盘，登录后会自动保存凭证。\n"
-            + "2. 登录成功后，请回到「百度网盘」线路浏览视频。\n"
-            + "3. 如需更换账号，先「退出登录」再重新「登录」。\n\n"
+            + "1. 首次使用需要在本配置线路中扫码登录百度网盘。\n"
+            + "2. 扫码后用手机浏览器打开网页，输入百度网盘 Cookie (BDUSS)。\n"
+            + "3. 登录成功后，请回到「百度网盘」线路浏览视频。\n"
+            + "4. 如需更换账号，先「退出登录」再重新「登录」。\n\n"
+            + "【Cookie 获取方式】\n"
+            + "1. 在电脑浏览器登录 pan.baidu.com\n"
+            + "2. 按 F12 打开开发者工具\n"
+            + "3. 切换到 Application/Storage → Cookies\n"
+            + "4. 复制 BDUSS 的值粘贴到手机网页\n\n"
             + "【注意事项】\n"
             + "- 网盘根目录下需要有视频文件夹，子文件夹会自动作为分类显示。\n"
             + "- 支持自动识别封面图片和简介文件。\n"
@@ -556,7 +554,7 @@ public class QuarkPersonalConfig extends Spider {
             for (String k : keys) {
                 sb.append(k).append("=").append(filtered.get(k)).append("&");
             }
-            sb.append(BD_SIGN_KEY);
+            sb.append(QR_SIGN_KEY);
             // MD5
             java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
             byte[] digest = md.digest(sb.toString().getBytes("UTF-8"));
@@ -571,50 +569,58 @@ public class QuarkPersonalConfig extends Spider {
         }
     }
 
-    // ========== 百度网盘 OAuth2 登录系统（后端中转） ==========
+    // ========== 百度网盘网页扫码登录系统 ==========
 
-    private String baiduOAuthState = "";
+    private String currentQrToken = "";
 
-    private void doBaiduOAuthLogin() throws Exception {
+    private void doBaiduQRLogin() throws Exception {
         loginSuccess = false;
         loginCancelled = false;
+        currentQrToken = "";
 
-        // 1. 调用后端创建授权会话，获取 auth_url 和 state
-        SpiderDebug.log("QuarkPersonalConfig: calling baidu_create...");
-        long t = System.currentTimeMillis();
-        String sign = makeSign(new HashMap<String, String>() {{
-            put("appkey", BD_APP_KEY);
-            put("t", String.valueOf(t));
-        }});
-        String createUrl = BD_SERVER_CREATE
-            + "?appkey=" + BD_APP_KEY
-            + "&sign=" + sign
-            + "&t=" + t;
+        // 1. 调用后端创建二维码会话
+        SpiderDebug.log("QuarkPersonalConfig: calling qrcode_create...");
+        String createUrl = QR_API_URL + "?act=qrcode_create&app=" + QR_APP_ID;
 
-        String body = OkHttp.string(createUrl, new HashMap<>());
-        SpiderDebug.log("QuarkPersonalConfig: baidu_create response=" + (body != null ? body.substring(0, Math.min(300, body.length())) : "null"));
+        Map<String, String> params = new HashMap<>();
+        params.put("device_id", getDeviceId());
+        params.put("type", "baidu_login");
+        params.put("t", String.valueOf(System.currentTimeMillis()));
+        params.put("sign", makeSign(params));
+
+        String body = OkHttp.string(createUrl, params);
+        SpiderDebug.log("QuarkPersonalConfig: qrcode_create response=" + (body != null ? body.substring(0, Math.min(300, body.length())) : "null"));
 
         Map<String, Object> resp = Json.parseSafe(body, Map.class);
-        if (resp == null || resp.get("auth_url") == null || resp.get("state") == null) {
-            throw new Exception("创建授权会话失败");
+        if (resp == null || resp.get("code") == null || !String.valueOf(resp.get("code")).equals("200")) {
+            throw new Exception("创建二维码会话失败");
         }
 
-        String authUrl = String.valueOf(resp.get("auth_url"));
-        baiduOAuthState = String.valueOf(resp.get("state"));
+        Map<String, Object> data = (Map<String, Object>) resp.get("msg");
+        if (data == null) {
+            throw new Exception("二维码数据为空");
+        }
 
-        SpiderDebug.log("QuarkPersonalConfig: baidu authUrl=" + authUrl + " state=" + baiduOAuthState);
+        String qrToken = String.valueOf(data.get("qr_token"));
+        String qrUrl = String.valueOf(data.get("qr_url"));
+        currentQrToken = qrToken;
+
+        SpiderDebug.log("QuarkPersonalConfig: qrUrl=" + qrUrl + " token=" + qrToken);
 
         // 2. 在主线程显示 QR 码
-        final String finalAuthUrl = authUrl;
+        final String finalQrUrl = qrUrl;
         mainHandler.post(new Runnable() {
             @Override
             public void run() {
-                showBaiduQRDialog(finalAuthUrl);
+                showBaiduQRDialog(finalQrUrl);
             }
         });
+
+        // 3. 轮询后端获取扫码结果
+        pollBaiduQRStatus(qrToken);
     }
 
-    private void showBaiduQRDialog(String authUrl) {
+    private void showBaiduQRDialog(String qrUrl) {
         try {
             dismissLoadingDialog();
             Activity activity = Init.getActivity();
@@ -631,7 +637,7 @@ public class QuarkPersonalConfig extends Spider {
             ImageView imageView = new ImageView(activity);
             try {
                 int size = ResUtil.dp2px(200);
-                Bitmap qrBitmap = QRCode.getBitmap(authUrl, size, 2);
+                Bitmap qrBitmap = QRCode.getBitmap(qrUrl, size, 2);
                 imageView.setImageBitmap(qrBitmap);
             } catch (Exception e) {
                 SpiderDebug.log("BaiduQR: generate QR failed: " + e.getMessage());
@@ -640,7 +646,7 @@ public class QuarkPersonalConfig extends Spider {
             layout.addView(imageView);
 
             TextView hintView = new TextView(activity);
-            hintView.setText("请使用百度APP扫码授权\n扫码后请等待自动登录");
+            hintView.setText("请使用手机浏览器扫码\n在网页上输入百度网盘 Cookie");
             hintView.setTextSize(14);
             hintView.setTextColor(Color.WHITE);
             hintView.setGravity(Gravity.CENTER);
@@ -663,32 +669,26 @@ public class QuarkPersonalConfig extends Spider {
                 .show();
             qrDialog.setCanceledOnTouchOutside(false);
 
-            // 3. 启动轮询线程
-            new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    pollBaiduOAuthStatus();
-                }
-            }).start();
-
         } catch (Exception e) {
-            SpiderDebug.log("BaiduOAuthLogin showQRDialog error: " + e.getMessage());
+            SpiderDebug.log("BaiduQRLogin showQRDialog error: " + e.getMessage());
         }
     }
 
-    private void pollBaiduOAuthStatus() {
-        SpiderDebug.log("QuarkPersonalConfig: start polling baidu status, state=" + baiduOAuthState);
+    private void pollBaiduQRStatus(String qrToken) {
+        SpiderDebug.log("QuarkPersonalConfig: start polling qrcode status, token=" + qrToken);
 
+        String statusUrl = QR_API_URL + "?act=qrcode_status&app=" + QR_APP_ID;
         long startTime = System.currentTimeMillis();
+
         while (!loginCancelled && !loginSuccess) {
             // 超时检查（5分钟）
             if (System.currentTimeMillis() - startTime > QR_TIMEOUT_MS) {
-                SpiderDebug.log("QuarkPersonalConfig: baidu oauth timeout");
+                SpiderDebug.log("QuarkPersonalConfig: baidu QR timeout");
                 mainHandler.post(new Runnable() {
                     @Override
                     public void run() {
                         dismissDialog();
-                        Notify.show("授权超时，请重新扫码");
+                        Notify.show("二维码已过期，请重新扫码");
                     }
                 });
                 break;
@@ -703,33 +703,29 @@ public class QuarkPersonalConfig extends Spider {
             if (loginCancelled) break;
 
             try {
-                long t2 = System.currentTimeMillis();
-                String sign2 = makeSign(new HashMap<String, String>() {{
-                    put("appkey", BD_APP_KEY);
-                    put("state", baiduOAuthState);
-                    put("t", String.valueOf(t2));
-                }});
-                String statusUrl = BD_SERVER_STATUS
-                    + "?appkey=" + BD_APP_KEY
-                    + "&state=" + URLEncoder.encode(baiduOAuthState, "UTF-8")
-                    + "&sign=" + sign2
-                    + "&t=" + t2;
+                Map<String, String> params = new HashMap<>();
+                params.put("qr_token", qrToken);
+                params.put("t", String.valueOf(System.currentTimeMillis()));
+                params.put("sign", makeSign(params));
 
-                String body = OkHttp.string(statusUrl, new HashMap<>());
+                String body = OkHttp.string(statusUrl, params);
                 Map<String, Object> resp = Json.parseSafe(body, Map.class);
 
-                if (resp == null) continue;
+                if (resp == null || resp.get("code") == null) continue;
 
-                String status = resp.get("status") != null ? String.valueOf(resp.get("status")) : "";
+                if (!String.valueOf(resp.get("code")).equals("200")) continue;
 
-                if ("success".equals(status)) {
-                    String accessToken = resp.get("access_token") != null ? String.valueOf(resp.get("access_token")) : "";
-                    String refreshToken = resp.get("refresh_token") != null ? String.valueOf(resp.get("refresh_token")) : "";
+                Map<String, Object> data = (Map<String, Object>) resp.get("msg");
+                if (data == null) continue;
 
-                    if (!refreshToken.isEmpty()) {
-                        baiduAccessToken = accessToken;
-                        baiduRefreshToken = refreshToken;
-                        writeBaiduTokenToFile(refreshToken, accessToken);
+                int status = Integer.parseInt(String.valueOf(data.get("status")));
+
+                if (status == 2) {
+                    // 已确认，获取 Cookie
+                    String cookieStr = data.get("user_token") != null ? String.valueOf(data.get("user_token")) : "";
+                    if (!cookieStr.isEmpty()) {
+                        baiduCookie = cookieStr;
+                        writeBaiduCookieToFile(cookieStr);
                         loginSuccess = true;
 
                         SpiderDebug.log("QuarkPersonalConfig: baidu login success!");
@@ -741,22 +737,31 @@ public class QuarkPersonalConfig extends Spider {
                                 Notify.show("百度网盘登录成功！");
                             }
                         });
+                        break;
                     }
-                } else if ("expired".equals(status)) {
-                    SpiderDebug.log("QuarkPersonalConfig: baidu oauth session expired");
+                } else if (status == 3) {
+                    SpiderDebug.log("QuarkPersonalConfig: baidu QR expired");
                     mainHandler.post(new Runnable() {
                         @Override
                         public void run() {
                             dismissDialog();
-                            Notify.show("授权已过期，请重新扫码");
+                            Notify.show("二维码已过期，请重新扫码");
                         }
                     });
                     break;
                 }
-                // status=pending: 继续轮询
+                // status=0/1: 继续轮询
             } catch (Exception e) {
-                SpiderDebug.log("QuarkPersonalConfig: poll baidu status error: " + e.getMessage());
+                SpiderDebug.log("QuarkPersonalConfig: poll baidu QR status error: " + e.getMessage());
             }
+        }
+    }
+
+    private String getDeviceId() {
+        try {
+            return android.provider.Settings.Secure.getString(savedContext.getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
+        } catch (Exception e) {
+            return UUID.randomUUID().toString();
         }
     }
 
