@@ -263,16 +263,31 @@ object ProxyServer {
         url: String?, headers: Map<String, String>
     ): MutableMap<String, MutableList<String>> {
         val newHeaders: MutableMap<String, String> = java.util.HashMap(headers)
-        newHeaders["Range"] = "bytes=0-" + (1024 * 1024 - 1)
-        newHeaders["range"] = "bytes=0-" + (1024 * 1024 - 1)
-        val res = OkHttp.newCall(url, headers)
+        // 用 Range: bytes=0-0 只请求1个字节，CDN返回206极快，避免下载完整文件
+        newHeaders["Range"] = "bytes=0-0"
+        newHeaders["range"] = "bytes=0-0"
+        val res = OkHttp.newCall(url, newHeaders)
         res.body()?.close()
         return res.headers().toMultimap()
     }
 
     private fun getContentLength(info: MutableMap<String, MutableList<String>>): Long {
-        // 实现获取内容长度逻辑
-        return info["Content-Length"]?.get(0)?.toLong() ?: 0L
+        // 优先从 Content-Range 解析总大小（206响应）
+        // Content-Range: bytes 0-0/147903415
+        val contentRange = info["Content-Range"]?.get(0) ?: info["content-range"]?.get(0)
+        if (contentRange != null) {
+            val slashIndex = contentRange.lastIndexOf('/')
+            if (slashIndex >= 0 && slashIndex + 1 < contentRange.length) {
+                try {
+                    return contentRange.substring(slashIndex + 1).toLong()
+                } catch (_: NumberFormatException) {
+                }
+            }
+        }
+        // 降级用 Content-Length（200响应）
+        return info["Content-Length"]?.get(0)?.toLong()
+            ?: info["content-length"]?.get(0)?.toLong()
+            ?: 0L
     }
 
     private fun getVideoStream(
