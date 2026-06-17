@@ -473,7 +473,20 @@ public class BaiduPersonal extends Spider {
         SpiderDebug.log("BaiduPersonal detailContent mainUrls=" + mainUrls.size());
 
         if (!allUrls.isEmpty()) {
-            builder.append("百度原画", allUrls);
+            // 根据VIP类型提供不同的播放源
+            // VIP类型: 0=非VIP, 1=普通VIP, 2=超级VIP
+            if (vipType >= 2) {
+                // 超级VIP：提供原画和转码多种清晰度
+                builder.append("百度原画", allUrls);
+                builder.append("百度M3U8", allUrls);
+            } else if (vipType == 1) {
+                // 普通VIP：提供原画和转码
+                builder.append("百度原画", allUrls);
+                builder.append("百度M3U8", allUrls);
+            } else {
+                // 非VIP：只提供转码（原画可能无法播放或限速）
+                builder.append("百度M3U8", allUrls);
+            }
         }
 
         Vod.VodPlayBuilder.BuildResult result = builder.build();
@@ -493,10 +506,20 @@ public class BaiduPersonal extends Spider {
         String filePath = parts.length > 1 ? parts[1] : "";
 
         String playUrl;
-        if (flag.contains("原画")) {
-            playUrl = getDownloadUrl(fsId);
+        Map<String, String> header = new HashMap<>();
+        
+        if (flag.contains("M3U8")) {
+            // 使用转码接口获取M3U8播放地址
+            // M3U8对Range头要求不严格，更适合通过代理播放
+            playUrl = getM3U8PlayUrl(filePath, fsId);
+            header.put("User-Agent", BD_USER_AGENT);
+            header.put("Referer", "https://pan.baidu.com/");
+            header.put("Cookie", cookie);
         } else {
-            playUrl = getVideoPlayUrl(filePath, fsId);
+            // 原画：使用CDN直链
+            playUrl = getDownloadUrl(fsId);
+            header.put("User-Agent", BD_APP_USER_AGENT);
+            header.put("Cookie", cookie);
         }
 
         if (playUrl == null || playUrl.isEmpty()) {
@@ -504,12 +527,9 @@ public class BaiduPersonal extends Spider {
             return Result.get().url("").string();
         }
 
-        Map<String, String> header = new HashMap<>();
-        header.put("User-Agent", BD_APP_USER_AGENT);
-        header.put("Cookie", cookie);
+        SpiderDebug.log("BaiduPersonal playerContent playUrl=" + playUrl.substring(0, Math.min(80, playUrl.length())));
 
-        // 直接返回CDN直链，让播放器自己请求
-        // 注意：IjkMediaPlayer的setDataSource(url, headers)会传递headers
+        // 直接返回播放链接，让播放器自己请求
         return Result.get()
             .url(playUrl)
             .header(header)
@@ -788,6 +808,58 @@ public class BaiduPersonal extends Spider {
             if (dlink != null) return String.valueOf(dlink);
         }
         return null;
+    }
+
+    /**
+     * 获取M3U8转码播放地址
+     * 使用百度网盘转码接口，返回M3U8播放列表
+     * M3U8格式对Range头要求不严格，更适合播放
+     */
+    private String getM3U8PlayUrl(String path, long fsId) throws Exception {
+        refreshBdstoken();
+        
+        // 百度网盘转码接口，获取M3U8播放地址
+        // type参数: M3U8_FLV_264_480=480P, M3U8_FLV_264_720=720P, M3U8_FLV_264_1080=1080P
+        String quality = "M3U8_FLV_264_480"; // 默认480P
+        if (vipType >= 2) {
+            quality = "M3U8_FLV_264_1080"; // 超级VIP可用1080P
+        } else if (vipType == 1) {
+            quality = "M3U8_FLV_264_720"; // 普通VIP可用720P
+        }
+        
+        String url = BD_API_HOST + "/api/mediainfo?type=" + quality + "&path=" + encodeUrl(path)
+            + "&fs_id=" + fsId + "&clienttype=80&origin=dlna";
+        
+        Map<String, String> headers = getApiHeaders();
+        String result = OkHttp.string(url, new HashMap<>(), headers);
+        SpiderDebug.log("BaiduPersonal getM3U8PlayUrl result=" + (result != null ? result.substring(0, Math.min(200, result.length())) : "null"));
+        
+        Map<String, Object> json = Json.parseSafe(result, Map.class);
+        if (json != null) {
+            // 尝试获取M3U8地址
+            if (json.get("info") != null) {
+                Map<String, Object> info = (Map<String, Object>) json.get("info");
+                // 转码后的M3U8地址通常在info中
+                Object m3u8Url = info.get("url");
+                if (m3u8Url != null) {
+                    String m3u8 = String.valueOf(m3u8Url);
+                    SpiderDebug.log("BaiduPersonal getM3U8PlayUrl m3u8=" + m3u8.substring(0, Math.min(80, m3u8.length())));
+                    return m3u8;
+                }
+            }
+            // 如果上面的路径不对，尝试其他可能的路径
+            if (json.get("media") != null) {
+                Map<String, Object> media = (Map<String, Object>) json.get("media");
+                Object m3u8Url = media.get("url");
+                if (m3u8Url != null) {
+                    return String.valueOf(m3u8Url);
+                }
+            }
+        }
+        
+        SpiderDebug.log("BaiduPersonal getM3U8PlayUrl failed, fallback to getVideoPlayUrl");
+        // 如果M3U8获取失败，回退到普通视频播放地址
+        return getVideoPlayUrl(path, fsId);
     }
 
     private Map<String, String> getApiHeaders() {
