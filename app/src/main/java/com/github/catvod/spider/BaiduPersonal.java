@@ -508,11 +508,10 @@ public class BaiduPersonal extends Spider {
         header.put("User-Agent", BD_APP_USER_AGENT);
         header.put("Cookie", cookie);
 
-        // 使用代理服务器处理播放，确保请求头正确传递
-        // 百度网盘CDN需要认证信息，直接播放可能因缺少认证而失败
-        String proxyUrl = ProxyVideo.buildCommonProxyUrl(playUrl, header);
+        // 直接返回CDN直链，让播放器自己请求
+        // 注意：IjkMediaPlayer的setDataSource(url, headers)会传递headers
         return Result.get()
-            .url(proxyUrl)
+            .url(playUrl)
             .header(header)
             .string();
     }
