@@ -219,10 +219,12 @@ public class BaiduPersonal extends Spider {
             pagecount = (int) Math.ceil((double) total / pageSize);
             if (pagecount < 1) pagecount = 1;
 
-            // 防止无限循环：如果请求的页码超出范围，强制pagecount等于当前page
+            // 防止无限循环：如果请求的页码超出范围，设置pagecount使APP停止加载
+            // APP端逻辑：page++ → if(page > pagecount) → loadMoreEnd()
+            // 所以pagecount必须 < page才能让APP停止
             if (page > pagecount) {
-                SpiderDebug.log("BaiduPersonal categoryContent page=" + page + " > pagecount=" + pagecount + ", adjusting pagecount to prevent infinite loop");
-                pagecount = page;
+                SpiderDebug.log("BaiduPersonal categoryContent page=" + page + " > pagecount=" + pagecount + ", set pagecount=" + (page - 1) + " to stop loading");
+                pagecount = page - 1;
             }
 
             SpiderDebug.log("BaiduPersonal categoryContent path=" + dirPath + " tid=" + tid + " page=" + page + "/" + pagecount + " subFolders=" + subFolders.size());
@@ -503,21 +505,24 @@ public class BaiduPersonal extends Spider {
         long fsId = Long.parseLong(parts[0]);
         String filePath = parts.length > 1 ? parts[1] : "";
 
-        String playUrl = getDownloadUrl(fsId);
+        String dlink = getDownloadUrl(fsId);
 
-        if (playUrl == null || playUrl.isEmpty()) {
+        if (dlink == null || dlink.isEmpty()) {
             Notify.show("获取播放链接失败，请检查Cookie是否过期");
             return Result.get().url("").string();
         }
 
+        // 通过APP本地代理播放，确保Range头正确转发
+        // 百度CDN要求：App UA + Cookie + Range头，缺一不可
         Map<String, String> header = new HashMap<>();
         header.put("User-Agent", BD_APP_USER_AGENT);
         header.put("Cookie", cookie);
 
-        SpiderDebug.log("BaiduPersonal playerContent playUrl=" + playUrl.substring(0, Math.min(80, playUrl.length())));
+        String proxyUrl = ProxyVideo.buildCommonProxyUrl(dlink, header);
+        SpiderDebug.log("BaiduPersonal playerContent proxyUrl=" + proxyUrl.substring(0, Math.min(80, proxyUrl.length())));
 
         return Result.get()
-            .url(playUrl)
+            .url(proxyUrl)
             .header(header)
             .string();
     }
@@ -772,21 +777,9 @@ public class BaiduPersonal extends Spider {
                 Object dlink = infoList.get(0).get("dlink");
                 if (dlink != null) {
                     String dlinkStr = String.valueOf(dlink);
-                    // 预解析302重定向，获取最终CDN直链
-                    // IjkMediaPlayer直接请求CDN，自动管理Range头
-                    // 百度CDN对App UA + Range返回206，对App UA + 无Range返回403
-                    try {
-                        Map<String, String> appHeaders = new HashMap<>();
-                        appHeaders.put("User-Agent", BD_APP_USER_AGENT);
-                        appHeaders.put("Cookie", cookie);
-                        String cdnUrl = OkHttp.getLocation(dlinkStr, appHeaders);
-                        if (cdnUrl != null && !cdnUrl.isEmpty()) {
-                            SpiderDebug.log("BaiduPersonal getDownloadUrl resolved CDN: " + cdnUrl.substring(0, Math.min(80, cdnUrl.length())));
-                            return cdnUrl;
-                        }
-                    } catch (Exception e) {
-                        SpiderDebug.log("BaiduPersonal getDownloadUrl resolve 302 failed: " + e.getMessage() + ", fallback to dlink");
-                    }
+                    // 直接返回dlink，由APP代理服务器处理302重定向和Range头
+                    // 百度CDN要求App UA + Cookie + Range，通过代理确保这些条件满足
+                    SpiderDebug.log("BaiduPersonal getDownloadUrl dlink=" + dlinkStr.substring(0, Math.min(80, dlinkStr.length())));
                     return dlinkStr;
                 }
             }
