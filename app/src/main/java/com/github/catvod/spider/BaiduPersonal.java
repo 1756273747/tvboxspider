@@ -218,6 +218,13 @@ public class BaiduPersonal extends Spider {
             total = subFolders.size();
             pagecount = (int) Math.ceil((double) total / pageSize);
             if (pagecount < 1) pagecount = 1;
+
+            // 防止无限循环：如果请求的页码超出范围，强制pagecount等于当前page
+            if (page > pagecount) {
+                SpiderDebug.log("BaiduPersonal categoryContent page=" + page + " > pagecount=" + pagecount + ", adjusting pagecount to prevent infinite loop");
+                pagecount = page;
+            }
+
             SpiderDebug.log("BaiduPersonal categoryContent path=" + dirPath + " tid=" + tid + " page=" + page + "/" + pagecount + " subFolders=" + subFolders.size());
             int start = (page - 1) * pageSize;
             int end = Math.min(start + pageSize, subFolders.size());
@@ -332,14 +339,18 @@ public class BaiduPersonal extends Spider {
 
     private String findPicInFolder(String dirPath) {
         try {
+            SpiderDebug.log("BaiduPersonal findPicInFolder path=" + dirPath);
             List<FileItem> items = listFileItems(dirPath);
+            SpiderDebug.log("BaiduPersonal findPicInFolder items=" + items.size());
             for (FileItem item : items) {
                 if (isPicFile(item.getName())) {
+                    SpiderDebug.log("BaiduPersonal findPicInFolder found pic=" + item.getName() + " thumbUrl=" + (item.getThumbUrl() != null ? item.getThumbUrl().substring(0, Math.min(60, item.getThumbUrl().length())) : "null"));
                     if (item.getThumbUrl() != null && !item.getThumbUrl().isEmpty()) {
                         return item.getThumbUrl();
                     }
                 }
             }
+            SpiderDebug.log("BaiduPersonal findPicInFolder no pic found in path=" + dirPath);
         } catch (Exception e) {
             SpiderDebug.log("BaiduPersonal findPicInFolder error: " + e.getMessage());
         }
@@ -473,20 +484,7 @@ public class BaiduPersonal extends Spider {
         SpiderDebug.log("BaiduPersonal detailContent mainUrls=" + mainUrls.size());
 
         if (!allUrls.isEmpty()) {
-            // 根据VIP类型提供不同的播放源
-            // VIP类型: 0=非VIP, 1=普通VIP, 2=超级VIP
-            if (vipType >= 2) {
-                // 超级VIP：提供原画和转码多种清晰度
-                builder.append("百度原画", allUrls);
-                builder.append("百度M3U8", allUrls);
-            } else if (vipType == 1) {
-                // 普通VIP：提供原画和转码
-                builder.append("百度原画", allUrls);
-                builder.append("百度M3U8", allUrls);
-            } else {
-                // 非VIP：只提供转码（原画可能无法播放或限速）
-                builder.append("百度M3U8", allUrls);
-            }
+            builder.append("百度原画", allUrls);
         }
 
         Vod.VodPlayBuilder.BuildResult result = builder.build();
@@ -505,31 +503,19 @@ public class BaiduPersonal extends Spider {
         long fsId = Long.parseLong(parts[0]);
         String filePath = parts.length > 1 ? parts[1] : "";
 
-        String playUrl;
-        Map<String, String> header = new HashMap<>();
-        
-        if (flag.contains("M3U8")) {
-            // 使用转码接口获取M3U8播放地址
-            // M3U8对Range头要求不严格，更适合通过代理播放
-            playUrl = getM3U8PlayUrl(filePath, fsId);
-            header.put("User-Agent", BD_USER_AGENT);
-            header.put("Referer", "https://pan.baidu.com/");
-            header.put("Cookie", cookie);
-        } else {
-            // 原画：使用CDN直链
-            playUrl = getDownloadUrl(fsId);
-            header.put("User-Agent", BD_APP_USER_AGENT);
-            header.put("Cookie", cookie);
-        }
+        String playUrl = getDownloadUrl(fsId);
 
         if (playUrl == null || playUrl.isEmpty()) {
             Notify.show("获取播放链接失败，请检查Cookie是否过期");
             return Result.get().url("").string();
         }
 
+        Map<String, String> header = new HashMap<>();
+        header.put("User-Agent", BD_APP_USER_AGENT);
+        header.put("Cookie", cookie);
+
         SpiderDebug.log("BaiduPersonal playerContent playUrl=" + playUrl.substring(0, Math.min(80, playUrl.length())));
 
-        // 直接返回播放链接，让播放器自己请求
         return Result.get()
             .url(playUrl)
             .header(header)
@@ -673,6 +659,20 @@ public class BaiduPersonal extends Spider {
                     long size = 0;
                     if (sizeObj instanceof Number) size = ((Number) sizeObj).longValue();
                     item.setSize(size);
+                    // 解析缩略图URL（百度API返回thumbs字段）
+                    Object thumbsObj = itemData.get("thumbs");
+                    if (thumbsObj instanceof Map) {
+                        Map<String, Object> thumbs = (Map<String, Object>) thumbsObj;
+                        // 尝试获取不同尺寸的缩略图，优先使用较大尺寸
+                        String[] thumbKeys = {"url3", "url2", "url1"};
+                        for (String key : thumbKeys) {
+                            Object thumbUrl = thumbs.get(key);
+                            if (thumbUrl != null && !String.valueOf(thumbUrl).isEmpty()) {
+                                item.setThumbUrl(String.valueOf(thumbUrl));
+                                break;
+                            }
+                        }
+                    }
                     items.add(item);
                 }
             }

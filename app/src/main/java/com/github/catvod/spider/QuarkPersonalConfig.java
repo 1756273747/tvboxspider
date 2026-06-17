@@ -157,6 +157,13 @@ public class QuarkPersonalConfig extends Spider {
         logoutVod.setVodContent(loggedIn ? "清除本地保存的百度网盘登录凭证" : "当前未登录");
         list.add(logoutVod);
 
+        Vod refreshVod = new Vod();
+        refreshVod.setVodId("baidu_config###刷新");
+        refreshVod.setVodName("刷新");
+        refreshVod.setVodPic("https://img2.baidu.com/it/u=2567814930,2774475860&fm=253&fmt=auto&app=138&f=JPEG");
+        refreshVod.setVodContent("重新获取网盘视频列表（需回到百度网盘线路查看）");
+        list.add(refreshVod);
+
         Vod tutorialVod = new Vod();
         tutorialVod.setVodId("baidu_config###使用说明");
         tutorialVod.setVodName("使用说明");
@@ -164,7 +171,7 @@ public class QuarkPersonalConfig extends Spider {
         tutorialVod.setVodContent("查看百度网盘使用说明");
         list.add(tutorialVod);
 
-        return Result.get().vod(list).page(1, 1, 10, 3).string();
+        return Result.get().vod(list).page(1, 1, 10, 4).string();
     }
 
     @Override
@@ -237,6 +244,9 @@ public class QuarkPersonalConfig extends Spider {
                     break;
                 case "退出登录":
                     doBaiduLogout();
+                    break;
+                case "刷新":
+                    doBaiduRefresh();
                     break;
                 case "使用说明":
                     showBaiduTutorialDialog();
@@ -442,6 +452,35 @@ public class QuarkPersonalConfig extends Spider {
     }
 
     // ========== 百度网盘功能操作 ==========
+
+    private void doBaiduRefresh() {
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Activity activity = Init.getActivity();
+                    if (activity == null || activity.isFinishing()) {
+                        Notify.show("刷新完成");
+                        return;
+                    }
+                    new AlertDialog.Builder(activity)
+                        .setTitle("刷新")
+                        .setMessage("此操作将重新获取百度网盘视频列表。\n请回到「百度网盘」线路查看更新后的列表。")
+                        .setPositiveButton("确定", new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialog, int which) {
+                                Notify.show("刷新完成，请回到百度网盘线路查看");
+                            }
+                        })
+                        .setNegativeButton("取消", null)
+                        .setCancelable(true)
+                        .show();
+                } catch (Exception e) {
+                    SpiderDebug.log("QuarkPersonalConfig doBaiduRefresh error: " + e.getMessage());
+                }
+            }
+        });
+    }
 
     private void doBaiduLogout() {
         mainHandler.post(new Runnable() {
