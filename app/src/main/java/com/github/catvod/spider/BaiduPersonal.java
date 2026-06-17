@@ -504,7 +504,7 @@ public class BaiduPersonal extends Spider {
 
         Map<String, String> header = new HashMap<>();
         header.put("User-Agent", BD_APP_USER_AGENT);
-        header.put("Cookie", cookie);
+        // 不放Cookie：CDN URL签名已包含认证信息，Cookie太长会导致Base64编码后URL超限被截断
 
         // 使用TVBox内置通用代理（流式转发），避免ProxyServer分块下载导致的seek超时
         return Result.get()
@@ -749,23 +749,11 @@ public class BaiduPersonal extends Spider {
             if (infoList != null && !infoList.isEmpty()) {
                 Object dlink = infoList.get(0).get("dlink");
                 if (dlink != null) {
-                    String dlinkStr = String.valueOf(dlink);
-                    // 预解析302重定向，获取最终CDN直链
-                    // ProxyServer使用OkHttp默认跟随302时会丢失自定义headers(Cookie/App UA)
-                    // 所以这里先用App UA手动解析302，拿到CDN URL再传给ProxyServer
-                    try {
-                        Map<String, String> appHeaders = new HashMap<>();
-                        appHeaders.put("User-Agent", BD_APP_USER_AGENT);
-                        appHeaders.put("Cookie", cookie);
-                        String cdnUrl = OkHttp.getLocation(dlinkStr, appHeaders);
-                        if (cdnUrl != null && !cdnUrl.isEmpty()) {
-                            SpiderDebug.log("BaiduPersonal getDownloadUrl resolved CDN: " + cdnUrl.substring(0, Math.min(80, cdnUrl.length())));
-                            return cdnUrl;
-                        }
-                    } catch (Exception e) {
-                        SpiderDebug.log("BaiduPersonal getDownloadUrl resolve 302 failed: " + e.getMessage() + ", fallback to dlink");
-                    }
-                    return dlinkStr;
+                    // 直接返回dlink，不预解析302
+                    // CDN URL太长(1270字符)Base64编码后超过URL长度限制会被截断
+                    // dlink较短(约300字符)，TVBox内置代理会自动跟随302到CDN
+                    // CDN签名在URL中，App UA在302后保留，不需要Cookie
+                    return String.valueOf(dlink);
                 }
             }
         }
