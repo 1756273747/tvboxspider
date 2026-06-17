@@ -95,13 +95,6 @@ public class BaiduPersonal extends Spider {
         SpiderDebug.log("BaiduPersonal init...");
         savedContext = context;
         
-        // 启动代理服务器
-        try {
-            ProxyServer.start();
-        } catch (Exception e) {
-            SpiderDebug.log("BaiduPersonal ProxyServer start error: " + e.getMessage());
-        }
-        
         if (extend != null && !extend.isEmpty()) {
             try {
                 Map<String, Object> ext = Json.parseSafe(extend, Map.class);
