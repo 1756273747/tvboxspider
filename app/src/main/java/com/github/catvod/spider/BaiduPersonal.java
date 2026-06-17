@@ -15,6 +15,7 @@ import com.github.catvod.utils.Json;
 import com.github.catvod.utils.Notify;
 import com.github.catvod.utils.ProxyServer;
 import com.github.catvod.utils.ProxyVideo;
+import com.github.catvod.utils.Util;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -93,6 +94,14 @@ public class BaiduPersonal extends Spider {
     public void init(Context context, String extend) throws Exception {
         SpiderDebug.log("BaiduPersonal init...");
         savedContext = context;
+        
+        // 启动代理服务器
+        try {
+            ProxyServer.start();
+        } catch (Exception e) {
+            SpiderDebug.log("BaiduPersonal ProxyServer start error: " + e.getMessage());
+        }
+        
         if (extend != null && !extend.isEmpty()) {
             try {
                 Map<String, Object> ext = Json.parseSafe(extend, Map.class);
@@ -506,12 +515,11 @@ public class BaiduPersonal extends Spider {
         header.put("User-Agent", BD_APP_USER_AGENT);
         header.put("Cookie", cookie);
 
-        // 直接返回CDN直链，让IjkMediaPlayer自己请求
-        // IjkMediaPlayer会自动管理Range seek，每次请求都带Range头
-        // 百度CDN对App UA + Range返回206，对App UA + 无Range返回403
-        // 走代理(handleHttpProxy/ProxyServer)会丢失Range头导致403
+        // 使用代理服务器处理播放，确保请求头正确传递
+        // 百度网盘CDN需要认证信息，直接播放可能因缺少认证而失败
+        String proxyUrl = ProxyVideo.buildCommonProxyUrl(playUrl, header);
         return Result.get()
-            .url(playUrl)
+            .url(proxyUrl)
             .header(header)
             .string();
     }
