@@ -504,7 +504,7 @@ public class BaiduPersonal extends Spider {
 
         Map<String, String> header = new HashMap<>();
         header.put("User-Agent", BD_APP_USER_AGENT);
-        // 不放Cookie：CDN URL签名已包含认证信息，Cookie太长会导致Base64编码后URL超限被截断
+        header.put("Cookie", cookie);
 
         // 使用TVBox内置通用代理（流式转发），避免ProxyServer分块下载导致的seek超时
         return Result.get()
