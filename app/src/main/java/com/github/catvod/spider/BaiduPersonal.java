@@ -506,10 +506,12 @@ public class BaiduPersonal extends Spider {
         header.put("User-Agent", BD_APP_USER_AGENT);
         header.put("Cookie", cookie);
 
-        // 使用TVBox内置通用代理（流式转发），避免ProxyServer分块下载导致的seek超时
+        // 直接返回CDN直链，让IjkMediaPlayer自己请求
+        // IjkMediaPlayer会自动管理Range seek，每次请求都带Range头
+        // 百度CDN对App UA + Range返回206，对App UA + 无Range返回403
+        // 走代理(handleHttpProxy/ProxyServer)会丢失Range头导致403
         return Result.get()
-            .url(ProxyVideo.buildCommonProxyUrl(playUrl, header))
-            .octet()
+            .url(playUrl)
             .header(header)
             .string();
     }
@@ -749,11 +751,23 @@ public class BaiduPersonal extends Spider {
             if (infoList != null && !infoList.isEmpty()) {
                 Object dlink = infoList.get(0).get("dlink");
                 if (dlink != null) {
-                    // 直接返回dlink，不预解析302
-                    // CDN URL太长(1270字符)Base64编码后超过URL长度限制会被截断
-                    // dlink较短(约300字符)，TVBox内置代理会自动跟随302到CDN
-                    // CDN签名在URL中，App UA在302后保留，不需要Cookie
-                    return String.valueOf(dlink);
+                    String dlinkStr = String.valueOf(dlink);
+                    // 预解析302重定向，获取最终CDN直链
+                    // IjkMediaPlayer直接请求CDN，自动管理Range头
+                    // 百度CDN对App UA + Range返回206，对App UA + 无Range返回403
+                    try {
+                        Map<String, String> appHeaders = new HashMap<>();
+                        appHeaders.put("User-Agent", BD_APP_USER_AGENT);
+                        appHeaders.put("Cookie", cookie);
+                        String cdnUrl = OkHttp.getLocation(dlinkStr, appHeaders);
+                        if (cdnUrl != null && !cdnUrl.isEmpty()) {
+                            SpiderDebug.log("BaiduPersonal getDownloadUrl resolved CDN: " + cdnUrl.substring(0, Math.min(80, cdnUrl.length())));
+                            return cdnUrl;
+                        }
+                    } catch (Exception e) {
+                        SpiderDebug.log("BaiduPersonal getDownloadUrl resolve 302 failed: " + e.getMessage() + ", fallback to dlink");
+                    }
+                    return dlinkStr;
                 }
             }
         }
