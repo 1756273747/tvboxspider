@@ -14,6 +14,7 @@ import com.github.catvod.net.OkResult;
 import com.github.catvod.utils.Json;
 import com.github.catvod.utils.Notify;
 import com.github.catvod.utils.ProxyServer;
+import com.github.catvod.utils.ProxyVideo;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -505,8 +506,9 @@ public class BaiduPersonal extends Spider {
         header.put("User-Agent", BD_APP_USER_AGENT);
         header.put("Cookie", cookie);
 
+        // 使用TVBox内置通用代理（流式转发），避免ProxyServer分块下载导致的seek超时
         return Result.get()
-            .url(ProxyServer.INSTANCE.buildProxyUrl(playUrl, header))
+            .url(ProxyVideo.buildCommonProxyUrl(playUrl, header))
             .octet()
             .header(header)
             .string();
